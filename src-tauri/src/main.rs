@@ -18,9 +18,7 @@ const DSH_URL: &str = "http://127.0.0.1:3080";
 
 /// 预装插件清单：发布到 npm 后，取消注释对应元素即可自动预装。
 /// 逻辑已完整实现（幂等：已安装则跳过；先于 web 启动，串行避免 npx/pnpm 并发锁）。
-const AUTO_INSTALL_PLUGINS: &[&str] = &[
-    // "adhdgofly-dsh-ext",
-];
+const AUTO_INSTALL_PLUGINS: &[&str] = &["adhdgofly-dsh-ext"];
 
 /// 记录 DSH 子进程 pid，应用退出时连同进程组一起回收
 struct DshPid(Mutex<Option<u32>>);

@@ -35,12 +35,10 @@
 ## 3. 首次预装 adhdgofly-dsh-ext（常量数组 + 注释元素）
 
 ```rust
-const AUTO_INSTALL_PLUGINS: &[&str] = &[
-    // "adhdgofly-dsh-ext",   // ← 发布到 npm 后取消注释
-];
+const AUTO_INSTALL_PLUGINS: &[&str] = &["adhdgofly-dsh-ext"];
 ```
 - 幂等：已安装则跳过；先于 `dsh web` 启动、串行执行，避免 npx/pnpm 并发锁。
-- 已核实该包当前不在 npm 上（npmjs 与 npmmirror 均 Not found）。
+- ✅ 2026-08-14：`adhdgofly-dsh-ext@0.1.1` 已发布 npm，注释已解开。
 
 ## 4. 插件视图定位（方案 C：生命周期分工）
 
@@ -73,3 +71,8 @@ const AUTO_INSTALL_PLUGINS: &[&str] = &[
 
 - 根目录补充 `/src-tauri/target/`、`/src-tauri/gen/`（双保险；`src-tauri/.gitignore` 原本已覆盖）。
 - 001/002 文档、demo1 蓝图为设计资产，保留跟踪。
+
+## 9. Bug 修复记录
+
+- **卡死问题（2026-08-14）**：`main.ts` 中 `new TabManager(...)` 的构造函数同步触发 `onActiveChange` 回调，而回调引用尚未赋值的 `const tabManager` → TDZ `ReferenceError`，boot() 在绑定导航按钮 / 调用 `start_dsh` 之前中断，导致：卡在 DSH 等待页、左侧按钮无响应、DSH 从未自启（3080 仅靠外部手动实例支撑）。
+- 修复：TabManager 移除外部回调，内部直接同步网址栏；main.ts 增加 `window.onerror` / `unhandledrejection` 兜底（异常写入日志视图）；`dsh-exit` 后自动探测外部 3080 并直连。

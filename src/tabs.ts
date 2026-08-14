@@ -57,18 +57,15 @@ export class TabManager {
   private tabListEl: HTMLElement;
   private stackEl: HTMLElement;
   private urlInput: HTMLInputElement;
-  private onActiveChange: (tab: TabData | null) => void;
 
   constructor(
     tabListEl: HTMLElement,
     stackEl: HTMLElement,
-    urlInput: HTMLInputElement,
-    onActiveChange: (tab: TabData | null) => void
+    urlInput: HTMLInputElement
   ) {
     this.tabListEl = tabListEl;
     this.stackEl = stackEl;
     this.urlInput = urlInput;
-    this.onActiveChange = onActiveChange;
     this.restore();
   }
 
@@ -123,7 +120,7 @@ export class TabManager {
     });
     this.ensurePane(tab);
     this.renderTabBar();
-    this.onActiveChange(tab);
+    this.syncUrlBar();
   }
 
   /** 网址栏：输入网址或搜索词并前往 */
@@ -294,7 +291,7 @@ export class TabManager {
     }
     this.renderTabBar();
     this.persist();
-    this.onActiveChange(tab);
+    this.syncUrlBar();
   }
 
   private renderTabBar(): void {

@@ -8,8 +8,6 @@ function $(id: string): HTMLElement {
   return document.getElementById(id)!;
 }
 
-let dshReady = false;
-
 function appendLog(msg: string): void {
   const logArea = $("log-area");
   logArea.textContent += msg + "\n";
@@ -44,18 +42,19 @@ async function launch(): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+  // 前端错误兜底：任何 JS 异常都写进日志视图，避免「静默卡死」
+  window.addEventListener("error", (e) => {
+    appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    appendLog("❌ 前端未处理异常: " + String(e.reason));
+  });
+
   await initDsh();
   onLog(appendLog);
 
   // ===== 多标签页（对话视图） =====
-  const tabManager = new TabManager(
-    $("tab-list"),
-    $("iframe-stack"),
-    $("url-input") as HTMLInputElement,
-    () => {
-      tabManager.syncUrlBar();
-    }
-  );
+  const tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));
   $("url-home").addEventListener("click", () => tabManager.addTab("blank"));
@@ -89,18 +88,26 @@ async function boot(): Promise<void> {
   initSettings();
 
   // ===== DSH 状态事件 =====
-  onReady(() => {
-    dshReady = true;
+  onReady((url) => {
     setStatus("running", "✅ DSH 运行中");
+    appendLog("✅ DSH 就绪: " + url);
     tabManager.markDshReady(); // 首次加载 / 重启后自动重连
     switchView("chat");
   });
   onExit(() => {
     appendLog("⚠️ DSH 进程已退出");
-    if (!dshReady) {
-      setStatus("error", "⚠️ DSH 已退出，可在日志页点击重新启动");
-    }
-    dshReady = false;
+    // 若外部有 DSH（如用户手动启动）在 3080，探测到后自动直连，避免卡死在等待页
+    setTimeout(async () => {
+      try {
+        await fetch("http://127.0.0.1:3080/", { mode: "no-cors" });
+        appendLog("✅ 检测到外部 DSH 已在 3080 运行，直接连接");
+        setStatus("running", "✅ DSH 运行中");
+        tabManager.markDshReady();
+        switchView("chat");
+      } catch {
+        setStatus("error", "⚠️ DSH 已退出，可在日志页点击重新启动");
+      }
+    }, 1500);
   });
 
   // ===== 启动 =====
