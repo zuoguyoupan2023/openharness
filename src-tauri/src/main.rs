@@ -2,13 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::OpenOptions;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
+use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
 
@@ -28,11 +29,29 @@ static LOG_SEQ: AtomicU32 = AtomicU32::new(0);
 
 // ============================ 设置（npm registry 等） ============================
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
-#[serde(default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct Settings {
     /// npm registry 地址；空串 = 官方默认
+    #[serde(default)]
     registry: String,
+    /// 关闭 app 时是否同时关闭 3080 上的 DSH（默认 true；自己在终端管理 DSH 的用户可关闭）
+    #[serde(default = "default_close_with_app")]
+    close_with_app: bool,
+}
+
+/// 缺失字段的默认值；close_with_app 缺省为 true（随 app 关闭）
+fn default_close_with_app() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            registry: String::new(),
+            close_with_app: true,
+        }
+    }
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -76,6 +95,15 @@ fn set_registry(app: AppHandle, url: String) -> Result<Settings, String> {
     Ok(s)
 }
 
+/// 设置「关闭 app 时是否同时关闭 3080 上的 DSH」（默认开启）
+#[tauri::command]
+fn set_close_with_app(app: AppHandle, enabled: bool) -> Result<Settings, String> {
+    let mut s = load_settings(&app);
+    s.close_with_app = enabled;
+    save_settings(&app, &s)?;
+    Ok(s)
+}
+
 /// 按设置向子进程注入 npm registry 环境变量。
 /// `npm_config_registry` 会级联到 npx（下载 dsh）与 pnpm（`dsh plugin` 内部）的所有子进程。
 fn apply_registry_env(cmd: &mut Command, app: &AppHandle) {
@@ -84,6 +112,528 @@ fn apply_registry_env(cmd: &mut Command, app: &AppHandle) {
         cmd.env("npm_config_registry", &s.registry)
             .env("NPM_CONFIG_REGISTRY", &s.registry);
     }
+}
+
+// ============================ Node.js 环境（检测 / 安装 / 内置优先） ============================
+// 背景：DSH 依赖系统 Node/npx（>=22.15，node:zlib zstd）。macOS 上从 Finder 启动的 GUI 应用 PATH 只有
+// /usr/bin:/bin:/usr/sbin:/sbin，找不到 brew/nvm 装的 node —— 因此检测与 spawn 都要额外搜索
+// 常见安装目录；若系统 Node 缺失或过旧，app 自动下载官方/镜像预编译包到应用数据目录
+// （内置 Node），此后所有子进程（npx dsh、插件安装）优先使用内置 Node。
+
+/// 内置 Node 的 LTS 版本（官方 nodejs.org 与淘宝 npmmirror 已同步）
+const NODE_VERSION: &str = "v22.23.2";
+/// 清华 TUNA 镜像同步滞后（未同步 v22.23.2），使用其已同步的最新 v22
+const NODE_VERSION_TUNA: &str = "v22.16.0";
+/// DSH 要求的最低 Node 版本：>= 22.15.0 —— node:zlib 的 zstd API 从 22.15.0 起提供，
+/// @deepseek-ai/dsh-session-persistence-jsonl 依赖它（v22.14.0 及更早启动 DSH 直接报错）
+const NODE_MIN_VERSION: (u32, u32, u32) = (22, 15, 0);
+
+/// Node 安装任务进行中标记（防止并发下载）
+struct NodeBusy(Mutex<bool>);
+
+/// 解析 "v22.15.0" → (22, 15, 0)；解析失败返回 (0,0,0)
+fn parse_node_version(v: &str) -> (u32, u32, u32) {
+    let mut it = v.trim().trim_start_matches('v').split('.');
+    let maj = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let min = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let pat = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (maj, min, pat)
+}
+
+/// macOS GUI 应用常见 Node 安装目录（Finder 启动时进程 PATH 不含这些目录）
+fn node_search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        // nvm：~/.nvm/versions/node/vXX/bin —— 必须按版本从新到旧排序！
+        // 否则可能选中旧版本（如 v22.14.0 缺少 node:zlib 的 zstd API，DSH 无法启动）
+        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+            let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            versions.sort_by(|a, b| {
+                let va = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let vb = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                parse_node_version(vb).cmp(&parse_node_version(va))
+            });
+            for p in versions {
+                dirs.push(p.join("bin"));
+            }
+        }
+        dirs.push(home.join(".volta/bin"));
+        dirs.push(home.join(".local/bin"));
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/bin")); // Apple Silicon brew
+    dirs.push(PathBuf::from("/usr/local/bin"));    // Intel brew / 官方 pkg
+    dirs.push(PathBuf::from("/usr/bin"));
+    dirs
+}
+
+/// 解析要使用的 npx 可执行文件（内置 Node 优先 → 常见安装目录 → 交给系统 PATH 兜底）
+fn resolve_npx(app: &AppHandle) -> String {
+    if let Some(dir) = bundled_node_dir(app) {
+        let p = dir.join("bin").join("npx");
+        if p.exists() {
+            return p.display().to_string();
+        }
+    }
+    for d in node_search_dirs() {
+        let p = d.join("npx");
+        if p.exists() {
+            return p.display().to_string();
+        }
+    }
+    "npx".to_string()
+}
+
+/// 合并后的 PATH：内置 Node bin（若有）+ 常见 Node 目录 + 原 PATH
+fn node_path_env(app: &AppHandle) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(dir) = bundled_node_dir(app) {
+        parts.push(dir.join("bin").display().to_string());
+    }
+    for d in node_search_dirs() {
+        if d.join("node").exists() {
+            parts.push(d.display().to_string());
+        }
+    }
+    if let Ok(p) = std::env::var("PATH") {
+        parts.push(p);
+    }
+    parts.join(":")
+}
+
+/// 向子进程注入 PATH（内置 Node 优先），使 `#!/usr/bin/env node` 与 pnpm 都命中正确运行时
+fn apply_node_env(cmd: &mut Command, app: &AppHandle) {
+    cmd.env("PATH", node_path_env(app));
+}
+
+/// 内置 Node 安装目录（应用数据目录/node），存在且含 node 可执行文件则 Some
+fn bundled_node_dir(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_data_dir().ok()?.join("node");
+    dir.join("bin").join("node").exists().then_some(dir)
+}
+
+/// 运行 `prog --version`，成功返回版本字符串（如 "v22.23.2"）
+async fn run_version(prog: &str) -> Option<String> {
+    let out = tokio::process::Command::new(prog)
+        .arg("--version")
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeCheck {
+    ok: bool,
+    /// 系统 node 版本（可能为 null）
+    system: Option<String>,
+    /// 系统 npx 是否可用
+    system_npx: bool,
+    /// 内置 node 版本（可能为 null）
+    bundled: Option<String>,
+    /// 内置 node 路径（可能为 null）
+    bundled_path: Option<String>,
+    message: String,
+}
+
+/// 检测 Node 环境：系统 node（常见安装目录 + PATH）与内置 node 二选一可用即 ok
+#[tauri::command]
+async fn check_node(app: AppHandle) -> NodeCheck {
+    // 系统 node：先查常见安装目录，查不到再走进程 PATH
+    let sys_dir = node_search_dirs().into_iter().find(|d| d.join("node").exists());
+    let (system, system_npx) = match &sys_dir {
+        Some(d) => (
+            run_version(&d.join("node").display().to_string()).await,
+            d.join("npx").exists(),
+        ),
+        None => (run_version("node").await, run_version("npx").await.is_some()),
+    };
+    let sys_ok = system
+        .as_ref()
+        .map(|v| parse_node_version(v) >= NODE_MIN_VERSION)
+        .unwrap_or(false)
+        && system_npx;
+
+    // 内置 node
+    let (bundled, bundled_path) = match bundled_node_dir(&app) {
+        Some(dir) => {
+            let prog = dir.join("bin").join("node").display().to_string();
+            match run_version(&prog).await {
+                Some(v) => (Some(v), Some(dir.display().to_string())),
+                None => (None, None),
+            }
+        }
+        None => (None, None),
+    };
+    let bundled_ok = bundled
+        .as_ref()
+        .map(|v| parse_node_version(v) >= NODE_MIN_VERSION)
+        .unwrap_or(false);
+
+    let ok = sys_ok || bundled_ok;
+    let min_str = format!(
+        "≥ {}.{}.0（DSH 依赖 node:zlib zstd）",
+        NODE_MIN_VERSION.0, NODE_MIN_VERSION.1
+    );
+    let message = if ok {
+        if bundled_ok {
+            format!(
+                "✅ 使用内置 Node.js {}（{}）",
+                bundled.as_deref().unwrap_or("?"),
+                bundled_path.as_deref().unwrap_or("")
+            )
+        } else {
+            format!(
+                "✅ 检测到系统 Node.js {}（npx {}{}）",
+                system.as_deref().unwrap_or("?"),
+                if system_npx { "可用" } else { "不可用" },
+                sys_dir
+                    .as_ref()
+                    .map(|d| format!(" @ {}", d.display()))
+                    .unwrap_or_default()
+            )
+        }
+    } else {
+        let sys_part = match &system {
+            Some(v) => format!("系统 Node.js {}（需要 {} 且 npx 可用）", v, min_str),
+            None => format!("未检测到系统 Node.js（需要 {} 且 npx 可用）", min_str),
+        };
+        format!(
+            "⚠️ {}；内置 Node 未安装。点击「下载并安装 Node.js」即可从官方/镜像源自动获取并内置。",
+            sys_part
+        )
+    };
+    NodeCheck {
+        ok,
+        system,
+        system_npx,
+        bundled,
+        bundled_path,
+        message,
+    }
+}
+
+// ---- Node 下载与安装 ----
+
+#[derive(Clone, Copy)]
+enum NodeSource {
+    Official,
+    Npmmirror,
+    Tuna,
+}
+
+impl NodeSource {
+    fn name(&self) -> &'static str {
+        match self {
+            NodeSource::Official => "官方 nodejs.org",
+            NodeSource::Npmmirror => "淘宝 npmmirror",
+            NodeSource::Tuna => "清华 TUNA",
+        }
+    }
+    fn key(&self) -> &'static str {
+        match self {
+            NodeSource::Official => "official",
+            NodeSource::Npmmirror => "npmmirror",
+            NodeSource::Tuna => "tuna",
+        }
+    }
+    /// 该源上的 Node 版本（TUNA 同步滞后，用其已同步的版本）
+    fn version(&self) -> &'static str {
+        match self {
+            NodeSource::Official | NodeSource::Npmmirror => NODE_VERSION,
+            NodeSource::Tuna => NODE_VERSION_TUNA,
+        }
+    }
+    fn url(&self, os: &str, arch: &str) -> String {
+        let v = self.version();
+        let file = format!("node-{}-{}-{}.tar.gz", v, os, arch);
+        match self {
+            NodeSource::Official => {
+                format!("https://nodejs.org/dist/{}/{}", v, file)
+            }
+            NodeSource::Npmmirror => {
+                format!("https://npmmirror.com/mirrors/node/{}/{}", v, file)
+            }
+            NodeSource::Tuna => {
+                format!(
+                    "https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/{}/{}",
+                    v, file
+                )
+            }
+        }
+    }
+}
+
+/// Node 目标平台（当前仅 macOS；其它平台明确报错而不是静默失败）
+fn node_os_arch() -> Result<(String, String), String> {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => {
+            return Err(format!(
+                "❌ 暂不支持自动安装 Node：当前系统为 {}（本版本仅支持 macOS）",
+                other
+            ))
+        }
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        other => {
+            return Err(format!(
+                "❌ 暂不支持自动安装 Node：不支持的 CPU 架构 {}",
+                other
+            ))
+        }
+    };
+    Ok((os.to_string(), arch.to_string()))
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeProgress {
+    source: String,
+    /// checking / download / extract / verify
+    phase: String,
+    downloaded: u64,
+    total: u64,
+    message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeReady {
+    version: String,
+    path: String,
+}
+
+/// 下载单个源的 tarball 到数据目录，边下边推进度事件
+async fn download_tarball(
+    app: &AppHandle,
+    src: NodeSource,
+    url: &str,
+    data_dir: &Path,
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("客户端初始化失败: {}", e))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut stream = resp.bytes_stream();
+    let tmp = data_dir.join("node-download.tar.gz");
+    let mut file = tokio::fs::File::create(&tmp)
+        .await
+        .map_err(|e| format!("无法创建临时文件: {}", e))?;
+    let mut downloaded: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("下载中断: {}", e))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+        downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            "node-progress",
+            NodeProgress {
+                source: src.key().into(),
+                phase: "download".into(),
+                downloaded,
+                total,
+                message: format!(
+                    "⬇️ {} 下载中 {:.1} MB / {:.1} MB",
+                    src.name(),
+                    downloaded as f64 / 1048576.0,
+                    total as f64 / 1048576.0
+                ),
+            },
+        );
+    }
+    file.flush().await.map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(())
+}
+
+/// 解压 tarball 到数据目录/node 并校验（原子替换）
+async fn install_tarball(
+    app: &AppHandle,
+    src: NodeSource,
+    data_dir: &Path,
+) -> Result<String, String> {
+    let tmp_tar = data_dir.join("node-download.tar.gz");
+    let tmp_dir = data_dir.join(format!("node-tmp-{}", std::process::id()));
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+    let _ = app.emit(
+        "node-progress",
+        NodeProgress {
+            source: src.key().into(),
+            phase: "extract".into(),
+            downloaded: 0,
+            total: 0,
+            message: format!("📦 {} 下载完成，正在解压安装...", src.name()),
+        },
+    );
+
+    let file = std::fs::File::open(&tmp_tar).map_err(|e| format!("打开压缩包失败: {}", e))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .unpack(&tmp_dir)
+        .map_err(|e| format!("解压失败: {}", e))?;
+
+    // 定位解压出的 node-vXX-... 目录
+    let inner = std::fs::read_dir(&tmp_dir)
+        .map_err(|e| format!("读取解压目录失败: {}", e))?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("node-v"))
+                    .unwrap_or(false)
+        })
+        .ok_or_else(|| "解压内容中未找到 node 目录".to_string())?;
+
+    // 原子替换：先移除旧内置目录，再改名
+    let dest = data_dir.join("node");
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest).ok();
+    }
+    std::fs::rename(&inner, &dest).map_err(|e| format!("移动 node 目录失败: {}", e))?;
+    std::fs::remove_dir_all(&tmp_dir).ok();
+
+    // 校验：运行内置 node --version
+    let _ = app.emit(
+        "node-progress",
+        NodeProgress {
+            source: src.key().into(),
+            phase: "verify".into(),
+            downloaded: 0,
+            total: 0,
+            message: format!("✅ {} 安装完成，正在校验...", src.name()),
+        },
+    );
+    let prog = dest.join("bin").join("node").display().to_string();
+    let version = run_version(&prog)
+        .await
+        .ok_or_else(|| "安装后校验失败：无法运行内置 node".to_string())?;
+    let _ = std::fs::remove_file(&tmp_tar);
+    Ok(version)
+}
+
+/// 按顺序尝试下载源，成功后返回 ()（node-ready 事件由内部发出）
+async fn download_node_inner(app: &AppHandle, requested: String) -> Result<(), String> {
+    let (os, arch) = node_os_arch()?;
+    let order: Vec<NodeSource> = match requested.as_str() {
+        "official" => vec![NodeSource::Official],
+        "npmmirror" => vec![NodeSource::Npmmirror],
+        "tuna" => vec![NodeSource::Tuna],
+        // auto（默认）：官方 → 淘宝 → 清华，逐个回退
+        _ => vec![
+            NodeSource::Official,
+            NodeSource::Npmmirror,
+            NodeSource::Tuna,
+        ],
+    };
+
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("❌ 无法获取应用数据目录: {}", e))?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| format!("❌ 无法创建数据目录: {}", e))?;
+
+    let mut last_err: Option<String> = None;
+    for src in order {
+        let url = src.url(&os, &arch);
+        let _ = app.emit(
+            "node-progress",
+            NodeProgress {
+                source: src.key().into(),
+                phase: "checking".into(),
+                downloaded: 0,
+                total: 0,
+                message: format!("🔗 正在连接{}（{}）...", src.name(), url),
+            },
+        );
+        match download_tarball(app, src, &url, &data_dir).await {
+            Ok(()) => match install_tarball(app, src, &data_dir).await {
+                Ok(version) => {
+                    let path = data_dir.join("node").display().to_string();
+                    let _ = app.emit(
+                        "node-ready",
+                        NodeReady {
+                            version: version.clone(),
+                            path: path.clone(),
+                        },
+                    );
+                    let _ = app.emit(
+                        "node-progress",
+                        NodeProgress {
+                            source: src.key().into(),
+                            phase: "done".into(),
+                            downloaded: 0,
+                            total: 0,
+                            message: format!(
+                                "✅ Node.js 安装成功（{}），路径：{}",
+                                version, path
+                            ),
+                        },
+                    );
+                    return Ok(());
+                }
+                Err(e) => last_err = Some(format!("{} 安装失败: {}", src.name(), e)),
+            },
+            Err(e) => {
+                last_err = Some(format!("{} 下载失败: {}", src.name(), e));
+                let _ = app.emit(
+                    "node-progress",
+                    NodeProgress {
+                        source: src.key().into(),
+                        phase: "checking".into(),
+                        downloaded: 0,
+                        total: 0,
+                        message: format!("⚠️ {} 不可用（{}），尝试下一个源...", src.name(), e),
+                    },
+                );
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "❌ Node 安装失败".to_string()))
+}
+
+/// 下载并安装内置 Node（后台任务，进度/结果走事件：node-progress / node-ready / node-fail）
+#[tauri::command]
+async fn download_node(app: AppHandle, source: String) -> Result<String, String> {
+    {
+        let state = app.state::<NodeBusy>();
+        let mut busy = state.0.lock().unwrap();
+        if *busy {
+            return Err("⏳ 已有 Node 安装任务进行中，请稍候".into());
+        }
+        *busy = true;
+    }
+    let app_task = app.clone();
+    tokio::spawn(async move {
+        let res = download_node_inner(&app_task, source).await;
+        *app_task.state::<NodeBusy>().0.lock().unwrap() = false;
+        if let Err(e) = res {
+            let _ = app_task.emit("node-fail", &e);
+        }
+    });
+    Ok("✅ Node 安装任务已启动".into())
 }
 
 // ============================ 工具函数 ============================
@@ -103,18 +653,54 @@ async fn dsh_already_running() -> bool {
     TcpStream::connect(("127.0.0.1", 3080)).await.is_ok()
 }
 
-/// 杀掉 DSH 进程组（npx -> node 两级进程），并清空记录
-fn kill_dsh(app: &AppHandle) {
+/// 同步查找监听 127.0.0.1:<port> 的进程 PID（lsof），用于退出/重启兜底回收
+fn port_listener_pid_sync(port: u16) -> Option<u32> {
+    let out = std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.trim().parse::<u32>().ok())
+}
+
+/// 强制回收 3080 上的 DSH（重启用，不遵循 close_with_app 设置）：
+/// 1) 杀记录的 pid 的进程组（自启场景，npx→node 两级）+ 其本身；
+/// 2) 兜底直接杀当前监听 3080 的进程（覆盖未记录的孤儿/被接管的外部实例）。
+fn kill_3080(app: &AppHandle) {
     if let Some(pid) = app.state::<DshPid>().0.lock().unwrap().take() {
         #[cfg(unix)]
         unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
+            let _ = libc::kill(-(pid as i32), libc::SIGKILL);
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
         }
         #[cfg(not(unix))]
         {
             let _ = pid;
         }
     }
+    if let Some(pid) = port_listener_pid_sync(3080) {
+        #[cfg(unix)]
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
+    }
+}
+
+/// 应用退出时回收：遵循设置（close_with_app 默认 true = 3080 随 app 关闭）
+fn kill_dsh_on_exit(app: &AppHandle) {
+    let s = load_settings(app);
+    if !s.close_with_app {
+        return;
+    }
+    kill_3080(app);
 }
 
 /// 读取 web profile 的 package.json → (dependencies, bundles)
@@ -154,9 +740,10 @@ fn plugin_installed(pkg: &str) -> bool {
 
 /// 执行任意 dsh CLI 命令（stdout/stderr 实时推送到日志视图），内部实现
 async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String> {
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(resolve_npx(app));
     cmd.arg("--yes").arg("@deepseek-ai/dsh").args(args);
     apply_registry_env(&mut cmd, app);
+    apply_node_env(&mut cmd, app);
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -206,9 +793,10 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         .try_clone()
         .map_err(|e| format!("❌ 无法复制日志句柄: {}", e))?;
 
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(resolve_npx(app));
     cmd.args(["--yes", "@deepseek-ai/dsh", "web"]);
     apply_registry_env(&mut cmd, app);
+    apply_node_env(&mut cmd, app);
     cmd.stdout(Stdio::from(log_file)).stderr(Stdio::from(log_file2));
     #[cfg(unix)]
     {
@@ -495,10 +1083,22 @@ async fn webview_close(state: tauri::State<'_, WebviewRegistry>, id: String) -> 
 async fn start_dsh(app: AppHandle) -> Result<String, String> {
     // 3080 已在服务（上次残留实例 / 手动启动的 DSH）→ 直接连接，避免重复启动冲突
     if dsh_already_running().await {
-        let _ = app.emit(
-            "dsh-log",
-            "✅ 检测到 DSH 已在 http://127.0.0.1:3080 运行，直接连接...",
-        );
+        // 接管现有实例：记录监听 PID，退出时（若设置开启）一并回收，避免孤儿残留
+        if let Some(pid) = port_listener_pid_sync(3080) {
+            *app.state::<DshPid>().0.lock().unwrap() = Some(pid);
+            let _ = app.emit(
+                "dsh-log",
+                format!(
+                    "🔌 检测到 DSH 已在 3080 运行（PID {}），已接管并随 app 管理（可在「设置」改为不随 app 关闭）",
+                    pid
+                ),
+            );
+        } else {
+            let _ = app.emit(
+                "dsh-log",
+                "✅ 检测到 DSH 已在 http://127.0.0.1:3080 运行，直接连接...",
+            );
+        }
         let _ = app.emit("dsh-ready", DSH_URL);
         return Ok("✅ 已连接现有 DSH 实例".into());
     }
@@ -518,10 +1118,10 @@ async fn start_dsh(app: AppHandle) -> Result<String, String> {
     Ok("🚀 DSH 正在启动，请稍候...".into())
 }
 
-/// 重启 DSH：杀掉当前进程组 → 等待端口释放 → 重新 spawn（插件装/卸/更后生效）
+/// 重启 DSH：强制回收 3080（含接管的外部实例）→ 等待端口释放 → 重新 spawn（插件装/卸/更后生效）
 #[tauri::command]
 async fn restart_dsh(app: AppHandle) -> Result<String, String> {
-    kill_dsh(&app);
+    kill_3080(&app);
     // 等待旧实例释放 3080，避免误判「已在运行」而跳过启动
     for _ in 0..25 {
         if !dsh_already_running().await {
@@ -587,6 +1187,7 @@ fn main() {
     tauri::Builder::default()
         .manage(DshPid(Mutex::new(None)))
         .manage(WebviewRegistry(Mutex::new(HashMap::new())))
+        .manage(NodeBusy(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,
@@ -594,6 +1195,9 @@ fn main() {
             list_installed_plugins,
             get_settings,
             set_registry,
+            set_close_with_app,
+            check_node,
+            download_node,
             webview_create,
             webview_show,
             webview_set_bounds,
@@ -607,9 +1211,9 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            // 应用退出时回收 DSH 进程组，避免残留占用 3080
+            // 应用退出时回收 DSH（遵循 close_with_app 设置，默认随 app 关闭），避免残留占用 3080
             RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                kill_dsh(app_handle);
+                kill_dsh_on_exit(app_handle);
             }
             _ => {}
         });

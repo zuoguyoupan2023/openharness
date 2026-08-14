@@ -3,6 +3,15 @@ import { initDsh, onLog, onReady, onExit, startDsh } from "./dsh";
 import { TabManager } from "./tabs";
 import { initPlugins } from "./plugins";
 import { initSettings } from "./settings";
+import {
+  checkNode,
+  downloadNode,
+  initNodeEvents,
+  onNodeFail,
+  onNodeProgress,
+  onNodeReady,
+  progressPercent,
+} from "./node";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -45,7 +54,84 @@ async function launch(): Promise<void> {
     appendLog(await startDsh());
   } catch (e) {
     appendLog("❌ 启动出错: " + String(e));
-    setStatus("error", "⚠️ 启动失败，请检查 Node.js (>=22) 与网络；可在「设置」切换国内镜像源");
+    setStatus("error", "⚠️ 启动失败，请检查 Node.js (>=22.15) 与网络；可在「设置」查看 Node 环境");
+  }
+}
+
+// ===== Node.js 环境准备向导 =====
+// 系统无 Node（或版本 < 22.15 / 无 npx）时弹出；下载安装成功后自动继续启动 DSH
+let nodeWizardBound = false;
+
+function showNodeWizard(initialMsg: string): void {
+  const wizard = $("node-wizard");
+  const status = $("node-status");
+  const log = $("node-log");
+  const bar = $("node-progress-bar") as HTMLElement;
+  const installBtn = $("node-install") as HTMLButtonElement;
+  const recheckBtn = $("node-recheck") as HTMLButtonElement;
+
+  wizard.classList.add("show");
+  status.textContent = initialMsg;
+  log.textContent = initialMsg + "\n";
+
+  const setBusy = (busy: boolean): void => {
+    installBtn.disabled = busy;
+    recheckBtn.disabled = busy;
+  };
+  const source = (): string => {
+    const el = document.querySelector<HTMLInputElement>(
+      'input[name="node-source"]:checked'
+    );
+    return el ? el.value : "auto";
+  };
+
+  if (!nodeWizardBound) {
+    nodeWizardBound = true;
+    onNodeProgress((p) => {
+      log.textContent += p.message + "\n";
+      log.scrollTop = log.scrollHeight;
+      bar.style.width = progressPercent(p) + "%";
+      if (p.phase === "done") status.textContent = p.message;
+    });
+    onNodeReady((r) => {
+      status.textContent = "✅ Node.js " + r.version + " 已就绪，正在启动 DSH...";
+      bar.style.width = "100%";
+      log.textContent +=
+        "✅ Node.js " + r.version + " 安装成功（" + r.path + "）\n" +
+        "🚀 正在启动 DSH（自动预装高亮插件 adhdgofly-dsh-ext，就绪后自动打开对话标签）...\n";
+      wizard.classList.remove("show");
+      void launch();
+    });
+    onNodeFail((msg) => {
+      status.textContent = "❌ " + msg;
+      log.textContent += "❌ " + msg + "\n";
+      log.textContent += "💡 可切换「淘宝 npmmirror / 清华 TUNA」源后重试，或先手动安装 Node.js。\n";
+      setBusy(false);
+    });
+
+    installBtn.addEventListener("click", async () => {
+      setBusy(true);
+      log.textContent += "⏳ 开始下载 Node.js...\n";
+      try {
+        await downloadNode(source());
+      } catch (e) {
+        log.textContent += "❌ " + String(e) + "\n";
+        setBusy(false);
+      }
+    });
+    recheckBtn.addEventListener("click", async () => {
+      setBusy(true);
+      const n = await checkNode();
+      if (n.ok) {
+        log.textContent += n.message + "\n";
+        wizard.classList.remove("show");
+        void launch();
+      } else {
+        status.textContent = n.message;
+        log.textContent += n.message + "\n";
+      }
+      setBusy(false);
+    });
   }
 }
 
@@ -103,6 +189,16 @@ async function boot(): Promise<void> {
   // ===== 设置 =====
   initSettings();
 
+  // ===== Node.js 环境入口（设置页） =====
+  $("settings-node-recheck").addEventListener("click", async () => {
+    const n = await checkNode();
+    $("settings-node-result").textContent = n.message;
+    if (!n.ok) showNodeWizard(n.message);
+  });
+  $("settings-node-reinstall").addEventListener("click", () => {
+    showNodeWizard("⬇️ 选择下载源后点击「下载并安装 Node.js」。若已内置旧版本，将被替换为新版本。");
+  });
+
   // ===== DSH 状态事件 =====
   onReady((url) => {
     setStatus("running", "✅ DSH 运行中");
@@ -126,7 +222,16 @@ async function boot(): Promise<void> {
     }, 1500);
   });
 
-  // ===== 启动 =====
+  // ===== 启动：先检查 Node 环境 =====
+  // 系统 Node（>=22 + npx）或内置 Node 可用 → 直接启动；
+  // 否则弹出 Node 安装向导，安装成功后自动继续（node-ready → launch）
+  await initNodeEvents();
+  const node = await checkNode();
+  if (!node.ok) {
+    showNodeWizard(node.message);
+    return;
+  }
+  appendLog(node.message);
   await launch();
 }
 

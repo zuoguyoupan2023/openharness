@@ -8,16 +8,22 @@ export const NPM_MIRROR = "https://registry.npmmirror.com";
 
 export interface Settings {
   registry: string;
+  /** 关闭 app 时是否同时关闭 3080 上的 DSH（默认 true） */
+  closeWithApp: boolean;
 }
 
 export async function getSettings(): Promise<Settings> {
   try {
     return await invoke<Settings>("get_settings");
   } catch {
-    return { registry: NPM_OFFICIAL };
+    return { registry: NPM_OFFICIAL, closeWithApp: true };
   }
 }
 
 export async function setRegistry(url: string): Promise<Settings> {
   return invoke<Settings>("set_registry", { url });
+}
+
+export async function setCloseWithApp(enabled: boolean): Promise<Settings> {
+  return invoke<Settings>("set_close_with_app", { enabled });
 }

@@ -508,6 +508,104 @@
     }
     .setting-row button:hover, .setting-group > button:hover { background: #2563eb; }
     .setting-saved { font-size: 0.82rem; color: #4ade80; }
+
+    /* ===== Node.js 环境准备向导（覆盖层） ===== */
+    #node-wizard {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      background: rgba(5, 10, 24, 0.88);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    #node-wizard.show { display: flex; }
+    .node-card {
+      width: 560px;
+      max-width: calc(100vw - 60px);
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      background: #0f172a;
+      border: 1px solid #2d3748;
+      border-radius: 18px;
+      padding: 24px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.7);
+    }
+    .node-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .node-title .badge { font-size: 0.7rem; background: #1e293b; color: #94a3b8; padding: 3px 10px; border-radius: 30px; font-weight: 400; }
+    .node-status {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px 14px;
+      line-height: 1.6;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .node-progress-wrap {
+      height: 8px;
+      background: #1e293b;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid #334155;
+    }
+    .node-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3b82f6, #a78bfa);
+      border-radius: 30px;
+      transition: width 0.25s ease;
+    }
+    .node-log {
+      background: #0b1120;
+      border: 1px solid #2d3748;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.78rem;
+      line-height: 1.7;
+      color: #94a3b8;
+      height: 96px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .node-sources {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 0.88rem;
+      color: #cbd5e1;
+    }
+    .node-sources label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .node-sources input[type="radio"] { accent-color: #3b82f6; }
+    .node-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .node-actions button {
+      background: #1d4ed8;
+      border: none;
+      color: #fff;
+      padding: 9px 22px;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .node-actions button:hover:not(:disabled) { background: #2563eb; }
+    .node-actions button:disabled { opacity: 0.5; cursor: wait; }
+    .node-actions .secondary { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; }
+    .node-actions .secondary:hover:not(:disabled) { background: #334155; }
   </style>
 </head>
 <body>
@@ -625,12 +723,61 @@
       </div>
 
       <div class="setting-group">
+        <div class="setting-label">Node.js 环境</div>
+        <div class="setting-desc">
+          DSH 依赖 Node.js（≥22.15，node:zlib zstd）+ npx。未安装时可让应用自动下载官方 / 淘宝 npmmirror /
+          清华 TUNA 的预编译包并内置到应用数据目录（无需 sudo，不污染系统）。
+        </div>
+        <div class="setting-row">
+          <button id="settings-node-recheck">🔍 重新检测 Node</button>
+          <button id="settings-node-reinstall">⬇️ 重新下载安装 Node</button>
+          <span id="settings-node-result" class="setting-saved"></span>
+        </div>
+      </div>
+
+      <div class="setting-group">
         <div class="setting-label">DSH 服务</div>
         <div class="setting-desc">重启 DSH 使插件安装 / 卸载 / 更新及镜像配置生效（对话中的会话会中断）。</div>
-        <button id="settings-restart">🔄 重启 DSH</button>
+        <label class="setting-radio" style="align-items:flex-start;">
+          <input type="checkbox" id="settings-close-with-app" style="margin-top:2px;" />
+          <span>
+            关闭 app 时同时关闭 3080 上的 DSH 服务（<b>默认开启</b>，即 3080 跟随 app 开关机）。
+            <br />如果你习惯自己在终端里启动 DSH，可关闭此项：app 退出后 DSH 继续运行。
+          </span>
+        </label>
+        <div class="setting-row">
+          <button id="settings-restart">🔄 重启 DSH</button>
+          <span id="settings-lc-saved" class="setting-saved"></span>
+        </div>
       </div>
     </section>
   </main>
+
+  <!-- Node.js 环境准备向导（系统无 Node 或版本过旧时弹出） -->
+  <div id="node-wizard">
+    <div class="node-card">
+      <div class="node-title">
+        🛠️ Node.js 环境准备
+        <span class="badge">DSH 需要 Node.js ≥ 22.15 + npx</span>
+      </div>
+      <div class="node-status" id="node-status">检测中…</div>
+      <div class="node-progress-wrap">
+        <div class="node-progress-bar" id="node-progress-bar"></div>
+      </div>
+      <div class="node-log" id="node-log"></div>
+      <div class="node-sources">
+        <div style="font-size:0.85rem; color:#94a3b8;">选择下载源（下载太慢或失败可换源重试；自动模式会依次回退）：</div>
+        <label><input type="radio" name="node-source" value="auto" checked /> 自动回退（官方 → 淘宝 npmmirror → 清华 TUNA）</label>
+        <label><input type="radio" name="node-source" value="official" /> 官方 nodejs.org</label>
+        <label><input type="radio" name="node-source" value="npmmirror" /> 淘宝 npmmirror（国内加速，推荐）</label>
+        <label><input type="radio" name="node-source" value="tuna" /> 清华 TUNA（同步滞后，使用其已同步的 v22 版本）</label>
+      </div>
+      <div class="node-actions">
+        <button id="node-install">⬇️ 下载并安装 Node.js</button>
+        <button id="node-recheck" class="secondary">🔄 重新检测</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

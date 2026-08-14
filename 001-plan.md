@@ -8,18 +8,20 @@
 
 ## ▶ 接下来该做什么（一句话版）
 
-**P0 已全部完成（多标签阶段 2 原生 webview + 插件发布联动）；接下来：① P0 插件中心收尾（详情页 + 自动更新检查 + 缓存落盘）② 然后进 P1（终端面板 → 工作区/权限模式），最后 P2 打包发布。** 详细排期见文末。
+**P0 已全部完成（多标签阶段 2 原生 webview + 插件发布联动 + Node 环境准备）；接下来：① P0 插件中心收尾（详情页 + 自动更新检查 + 缓存落盘）② 然后进 P1（终端面板 → 工作区/权限模式），最后 P2 打包发布。** 详细排期见文末。
 
 ---
 
 ## ✅ 已完成（2026-08-14 迭代）
 
-- [x] 改名 openharness（B 标准：productName / identifier / crate / 品牌 / 日志前缀）
+- [x] 改名 openharness（B 标准：productName / identifier `app.openharness.work` / crate / 品牌 / 日志前缀）
+- [x] **3080 生命周期可配置**：退出时强制回收（进程组 + lsof 兜底）、接管已有实例、`close_with_app` 设置（默认随 app 关闭，终端自管用户可关）
 - [x] 多标签页阶段 1：iframe 池 + 标签栏 + 网址栏 + 历史栈 + 新标签页 + localStorage 持久化
 - [x] **多标签页阶段 2：网页标签升级 Tauri 原生子 webview**（`tauri::Window::add_child`，`unstable` feature；DSH 标签保持 iframe）——Google / GitHub / npm 等不再白屏；`window.open`/`target=_blank` 自动开新标签；导航/标题事件同步网址栏与标签标题
 - [x] 插件中心基础：awesome-dsh-plugin 索引（143 插件）+ 分类/搜索 + npm 版本（npmmirror 回退）+ 装/卸/更 + 自动重启生效 + 官方组合包区
 - [x] 设置视图：npm 镜像源（官方/淘宝/自定义）持久化 + 注入 `npm_config_registry` 全链路生效
 - [x] 预装插件机制：`AUTO_INSTALL_PLUGINS`（`adhdgofly-dsh-ext@0.1.1` 已发布 npm 并解开，启动自动预装）
+- [x] **Node.js 环境准备**：启动检测（含 brew/nvm 目录搜索，解决 Finder PATH 缺失）+ 三源安装向导（官方/淘宝/清华，自动回退）+ 内置 Node 优先（免 sudo）+ 安装后自动继续启动 DSH 并打开对话标签
 - [x] 稳定性：日志走文件防 EPIPE、`window.onerror` 兜底、`dsh-exit` 后自动探测外部 3080 直连
 - [x] Bug 修复：TabManager TDZ 崩溃（卡死 + 按钮无响应 + DSH 不自启）
 
@@ -96,15 +98,15 @@
 ## P2 · 打包发布
 
 - `npm run tauri build` 产出 .app / .dmg。
-- 签名 + notarize（`tauri-apple-signing` / `@tauri-apps/cli`）。
+- 签名 + notarize（`tauri-apple-signing` / `@tauri-apps/cli`）——未签名发布需引导用户右键「打开」放行 Gatekeeper（发布说明见 `RELEASE-NOTES-v0.1.0.md`）。
 - 自动更新（`tauri-plugin-updater` + 更新服务器）。
-- 安装包内嵌 Node 运行时（可选）：摆脱对系统 Node/npx 的依赖，预装 `@deepseek-ai/dsh` 离线可用。
+- 安装包内嵌 Node 运行时（可选）：✅ 已实现「缺失时自动下载内置 Node（免 sudo）」；可选后续把 `@deepseek-ai/dsh` 一并打包离线可用（摆脱首次联网下载）。
 
 ---
 
 ## 排期建议（下一个迭代）
 
-1. **P0 · 插件中心收尾**——详情页 + 自动更新检查 + 缓存落盘（多标签阶段 2 已完成）
+1. **P0 · 插件中心收尾**——详情页 + 自动更新检查 + 缓存落盘（多标签阶段 2、Node 环境准备已完成）
 2. **P1 · 嵌入式终端面板**——xterm.js + stdin 转发
 3. **P1 · 工作区 / 权限模式 UI**——Codex/WorkBuddy 差异化参考点
-4. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 Node
+4. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 dsh 离线包（Node 安装器已就绪）

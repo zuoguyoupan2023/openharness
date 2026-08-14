@@ -20,3 +20,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 # 用于退出时回收 DSH 子进程组（kill(-pgid)）
 libc = "0.2"
+# Node.js 缺失时：下载官方/镜像预编译包（reqwest 流式下载 + tar.gz 解压）
+reqwest = { version = "0.12", default-features = false, features = ["stream", "native-tls"] }
+flate2 = "1"
+tar = "0.4"
+futures-util = "0.3"

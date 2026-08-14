@@ -1,6 +1,6 @@
-// src/settings.ts —— 设置视图（npm 镜像源等）
+// src/settings.ts —— 设置视图（npm 镜像源、DSH 生命周期等）
 import { restartDsh } from "./dsh";
-import { getSettings, setRegistry, NPM_MIRROR } from "./config";
+import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 
 export function initSettings(): void {
   const radios = document.getElementsByName("registry") as NodeListOf<HTMLInputElement>;
@@ -8,6 +8,8 @@ export function initSettings(): void {
   const save = document.getElementById("registry-save") as HTMLButtonElement;
   const saved = document.getElementById("registry-saved") as HTMLSpanElement;
   const restartBtn = document.getElementById("settings-restart") as HTMLButtonElement;
+  const closeWithApp = document.getElementById("settings-close-with-app") as HTMLInputElement;
+  const lcSaved = document.getElementById("settings-lc-saved") as HTMLSpanElement;
 
   void getSettings().then((s) => {
     const isMirror = s.registry === NPM_MIRROR;
@@ -18,6 +20,7 @@ export function initSettings(): void {
       else r.checked = s.registry === "";
     });
     if (isCustom) custom.value = s.registry;
+    closeWithApp.checked = s.closeWithApp;
   });
 
   save.addEventListener("click", async () => {
@@ -39,6 +42,21 @@ export function initSettings(): void {
     }
     setTimeout(() => {
       saved.textContent = "";
+    }, 5000);
+  });
+
+  // 关闭 app 时是否同时关闭 3080 上的 DSH（默认开启）
+  closeWithApp.addEventListener("change", async () => {
+    try {
+      await setCloseWithApp(closeWithApp.checked);
+      lcSaved.textContent = closeWithApp.checked
+        ? "✓ 已保存：3080 将随 app 一起关闭"
+        : "✓ 已保存：3080 将不随 app 关闭（退出后 DSH 继续运行）";
+    } catch (e) {
+      lcSaved.textContent = "⚠️ 保存失败：" + String(e);
+    }
+    setTimeout(() => {
+      lcSaved.textContent = "";
     }, 5000);
   });
 
