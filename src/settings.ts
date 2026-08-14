@@ -3,6 +3,7 @@ import { restartDsh } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
+import { getIndexSourcePref, getIndexSourceCustom, setIndexSourcePref, type IndexSource } from "./plugin-sources";
 
 export function initSettings(): void {
   const radios = document.getElementsByName("registry") as NodeListOf<HTMLInputElement>;
@@ -105,6 +106,34 @@ export function initSettings(): void {
       if (r.checked) setLang(r.value === "zh" ? "zh" : "en");
     });
   });
+
+  // ===== 插件索引源（006 双数据源后台刷新取源） =====
+  const idxRadios = document.getElementsByName("plugin-index-source") as NodeListOf<HTMLInputElement>;
+  const idxCustom = document.getElementById("plugin-index-source-custom") as HTMLInputElement | null;
+  const syncIdxRadios = (): void => {
+    const pref = getIndexSourcePref();
+    idxRadios.forEach((r) => {
+      if (r.value === "__custom") r.checked = pref === "custom";
+      else r.checked = r.value === pref;
+    });
+    if (idxCustom && pref === "custom") idxCustom.value = getIndexSourceCustom();
+  };
+  syncIdxRadios();
+  idxRadios.forEach((r) => {
+    r.addEventListener("change", () => {
+      if (!r.checked) return;
+      if (r.value === "__custom") {
+        setIndexSourcePref("custom", (idxCustom?.value || "").trim());
+      } else {
+        setIndexSourcePref(r.value as IndexSource);
+      }
+    });
+  });
+  if (idxCustom) {
+    idxCustom.addEventListener("change", () => {
+      if (getIndexSourcePref() === "custom") setIndexSourcePref("custom", idxCustom.value.trim());
+    });
+  }
 
   // 语言变化后重新同步语言单选（设置页本身不重渲染，保持选中态）
   window.addEventListener("lang-changed", syncLangRadios);

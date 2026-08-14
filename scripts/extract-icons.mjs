@@ -38,6 +38,10 @@ const NEEDED = [
   "package", // 官方组合包标题
   "boxes", // 社区插件标题
   "sun-moon", // 外观设置组
+  "star", // 插件中心：来源 tabs「精选」+ ★stars 列
+  "github", // 插件中心：来源 tabs「GitHub Topic」
+  "check", // 插件中心：刷新成功提示条
+  "triangle-alert", // 插件中心：刷新失败提示条（lucide 新名，旧 alert-triangle 已改名）
 ];
 
 const out = {};
@@ -48,7 +52,11 @@ for (const name of NEEDED) {
     missing.push(name);
     continue;
   }
-  out[name] = icon; // { body, width?, height? }
+  // 仅保留 iconSvg 实际使用的字段（body / width / height），剔除 lucide 的 hidden/aliases 等
+  const slim = { body: icon.body };
+  if (icon.width) slim.width = icon.width;
+  if (icon.height) slim.height = icon.height;
+  out[name] = slim;
 }
 if (missing.length) {
   console.error("缺失图标:", missing.join(", "));

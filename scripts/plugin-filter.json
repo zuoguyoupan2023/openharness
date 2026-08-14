@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "006 计划 · 插件中心双数据源「手维护过滤规则」。",
+    "scripts/build-snapshot.mjs 在构建期读取此文件，对 marketplace（GitHub topic）源做过滤与字段覆盖；前端只读生成产物（src/plugin-registry.generated.json），不做过滤。",
+    "决策（006 §6）：上游只读不维护——手维护的只有本文件；随社区演进增删即可（全量条目由构建脚本自动生成，避免人工逐条维护导致的过期）。",
+    "质量标注：自动过滤、人工未逐条审核；命中 softBlacklist 的高星仓库按规则剔除，边缘案例用 whitelistRepos/blacklistRepos/overrides 手工干预。"
+  ],
+
+  "namingKeywords": ["dsh", "deepseek-harness", "deepseek-"],
+  "keepTopics": ["deepseek-harness-plugin"],
+
+  "softBlacklist": {
+    "$comment": "命中任一关键词的仓库：若同时「不在 awesome」且「stars >= minStars」则剔除（高星通用 AI 工具蹭 dsh-plugin 标签）。低星真实插件提及 codex/claude-code 等集成不会误删。",
+    "keywords": [
+      "claude-code", "claude code", "codex", "cursor",
+      "figma", "design alternative", "claude design",
+      "prototyping", "vibe coding", "landing page", "ui generator",
+      "byok", "managed agents", "claude cowork", "self-hosted agent",
+      "mcp server", "mcp tool", "agent runtime", "open-source alternative"
+    ],
+    "minStars": 50
+  },
+
+  "whitelistRepos": [],
+  "blacklistRepos": [],
+
+  "overrides": {
+    "$comment": "按 full_name（owner/repo，小写）手工覆盖字段：补中英文描述、修正 install 命令、修正分类等。键 = lowercased full_name。"
+  }
+}

@@ -173,6 +173,7 @@
       flex: 1;
     }
     .nav-btn {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -190,6 +191,23 @@
       white-space: nowrap;
       overflow: hidden;
     }
+    /* 插件可更新数角标（自动更新检查写入） */
+    .nav-badge {
+      position: absolute;
+      top: 2px;
+      right: 4px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 20px;
+      background: var(--danger, #e5484d);
+      color: #fff;
+      font-size: 0.62rem;
+      font-weight: 600;
+      line-height: 16px;
+      text-align: center;
+    }
+    .nav-badge[hidden] { display: none; }
     .nav-btn:hover { background: var(--hover); color: var(--text); }
     .nav-btn.active {
       background: var(--accent-strong);
@@ -696,6 +714,107 @@
     .install-btn:disabled { opacity: 0.4; cursor: wait; }
     .plugin-loading { color: var(--text-faint); font-size: 0.83rem; }
 
+    /* ===== 来源 tabs / ★Stars / 来源徽标 / 提示条（006 双数据源 + 秒开） ===== */
+    .source-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+    .src-tab {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--card-2); border: 1px solid var(--border-strong);
+      color: var(--text-dim); padding: 4px 12px; border-radius: 14px;
+      font-size: 0.78rem; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .src-tab:hover { background: var(--hover); color: var(--text-bright); }
+    .src-tab.active { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    .src-tab svg { font-size: 0.92em; }
+    .plugin-table .desc { color: var(--text-faint); font-size: 0.74rem; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .plugin-table .stars { color: var(--text-dim); font-size: 0.74rem; white-space: nowrap; }
+    .plugin-table .stars svg { width: 0.85em; height: 0.85em; vertical-align: -1px; margin-right: 2px; color: var(--text-faint); }
+    .plugin-table .src { white-space: nowrap; }
+    .plugin-table .actions { text-align: right; white-space: nowrap; }
+    .src-badge {
+      display: inline-block; font-size: 0.66rem; padding: 1px 7px; border-radius: 30px;
+      margin-right: 3px; vertical-align: middle; border: 1px solid var(--border-strong);
+    }
+    .src-badge.awesome { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    .src-badge.topic { background: var(--card-2); color: var(--text-dim); }
+    .detail-src { display: inline-flex; gap: 4px; align-items: center; }
+    .detail-repo { margin-top: 4px; }
+    .snapshot-banner {
+      display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 10px;
+      font-size: 0.78rem; margin-bottom: 8px; border: 1px solid var(--border-strong);
+    }
+    .snapshot-banner.ok { background: var(--ok-soft); color: var(--ok-text); }
+    .snapshot-banner.fail { background: var(--warn-soft); color: var(--warn-text); }
+    .snapshot-banner svg { width: 1em; height: 1em; }
+    .snapshot-banner .banner-close { margin-left: auto; background: transparent; border: none; color: inherit; cursor: pointer; display: inline-flex; padding: 0; }
+    .plugin-table td.plugin-detail-td > .plugin-detail { /* keep detail rule below */ }
+
+    /* ===== 插件详情（行内展开，P0 收尾） ===== */
+    .plugin-table tr.plugin-row { cursor: pointer; }
+    .plugin-table tr.plugin-row:hover td { background: var(--hover); }
+    .plugin-table tr.plugin-row.open td { background: var(--panel); }
+    .plugin-table td.plugin-detail-td { padding: 0 !important; background: var(--panel); }
+    .plugin-detail { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .detail-name { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--text-bright); }
+    .detail-link {
+      font-size: 0.72rem;
+      color: var(--link);
+      text-decoration: none;
+      max-width: 45%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .detail-link:hover { text-decoration: underline; }
+    .detail-actions { margin-left: auto; display: inline-flex; align-items: center; }
+    .detail-meta { display: flex; flex-direction: column; gap: 4px; }
+    .detail-desc { color: var(--text-dim); font-size: 0.82rem; line-height: 1.5; }
+    .detail-spec { color: var(--text-faint); font-size: 0.74rem; display: flex; gap: 6px; align-items: center; }
+    .detail-spec code { font-size: 0.72rem; color: var(--text-dim); }
+    .detail-body { display: flex; flex-direction: column; gap: 6px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; }
+    .detail-kv { display: flex; gap: 6px; align-items: baseline; font-size: 0.76rem; }
+    .detail-kv span { color: var(--text-faint); }
+    .detail-kv b { color: var(--text-bright); font-weight: 600; }
+    .detail-section { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+    .detail-section-title { font-size: 0.74rem; color: var(--text-dim); font-weight: 600; }
+    .detail-versions, .detail-deps { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ver-chip {
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .ver-chip.current { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    .ver-more { font-size: 0.7rem; color: var(--text-faint); align-self: center; }
+    .dep-chip {
+      font-size: 0.7rem;
+      color: var(--link);
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .dep-chip i { color: var(--text-faint); font-style: normal; margin-left: 3px; }
+    .detail-readme {
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.76rem;
+      color: var(--text-dim);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 220px;
+      overflow-y: auto;
+      line-height: 1.55;
+    }
+    .detail-readme.empty { color: var(--text-faint); }
+    .detail-note { color: var(--text-faint); font-size: 0.76rem; }
+
     /* ===== 设置视图 ===== */
     #view-settings { padding: 16px 20px; gap: 12px; overflow-y: auto; }
     .setting-group {
@@ -865,6 +984,7 @@
       <button class="nav-btn" data-view="plugins">
         <span class="icon"><i data-icon="puzzle"></i></span>
         <span class="label" data-i18n="nav.plugins">插件</span>
+        <span class="nav-badge" id="nav-plugins-badge" hidden></span>
       </button>
       <button class="nav-btn" data-view="settings">
         <span class="icon"><i data-icon="settings"></i></span>
@@ -943,6 +1063,7 @@
         </button>
         <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
       </div>
+      <div id="plugin-source-tabs" class="source-tabs"></div>
       <div id="plugin-cats" class="plugin-cats"></div>
 
       <div class="section-title">
@@ -961,17 +1082,20 @@
 
       <div class="section-title">
         <span class="ticon"><i data-icon="boxes"></i></span>
-        <span data-i18n="plugins.communityTitle">社区插件（awesome-dsh-plugin）</span>
+        <span data-i18n="plugins.communityTitle">插件市场（精选 + GitHub Topic）</span>
         <span class="badge" id="plugin-count">-</span>
       </div>
       <div id="plugin-loading" class="plugin-loading"></div>
+      <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
       <table class="plugin-table" id="plugin-table" style="display:none;">
         <thead>
           <tr>
             <th data-i18n="plugins.col.name">插件</th>
-            <th data-i18n="plugins.col.version">版本</th>
-            <th data-i18n="plugins.col.status">状态</th>
             <th data-i18n="plugins.col.desc">描述</th>
+            <th data-i18n="plugins.col.version">版本</th>
+            <th data-i18n="plugins.col.stars">★ Stars</th>
+            <th data-i18n="plugins.col.source">来源</th>
+            <th data-i18n="plugins.col.status">状态</th>
             <th></th>
           </tr>
         </thead>
@@ -1040,6 +1164,23 @@
           </button>
           <span id="settings-lc-saved" class="setting-saved"></span>
         </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="boxes"></i>
+          <span data-i18n="settings.pluginIndex.title">插件索引源</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.pluginIndex.desc">
+          插件中心后台刷新 registry 的取源。默认自动（jsdelivr CDN → GitHub raw 并发取最新者，规避 jsdelivr 缓存滞后）；jsdelivr 国内更快，GitHub raw 更新最及时；自建镜像填完整 URL。
+        </div>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="auto" /><span data-i18n="settings.pluginIndex.auto">自动（jsdelivr → GitHub raw，取最新）</span></label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="jsdelivr" /><span data-i18n="settings.pluginIndex.jsdelivr">jsdelivr CDN（国内快）</span></label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="raw" /><span data-i18n="settings.pluginIndex.raw">GitHub raw（最新，国内可能慢）</span></label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="__custom" /><span data-i18n="settings.pluginIndex.optCustom">自定义镜像：</span>
+          <input id="plugin-index-source-custom" placeholder="https://your-mirror/plugins.registry.json" spellcheck="false" />
+        </label>
+        <div class="setting-desc" style="font-size:0.76rem;color:var(--text-faint);"><span data-i18n="settings.pluginIndex.note">改动立即生效：下次刷新插件索引即按此取源；打包快照始终离线秒开、不受影响。</span></div>
       </div>
 
       <div class="setting-group">
