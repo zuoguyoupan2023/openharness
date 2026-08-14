@@ -5,6 +5,7 @@
 import { DSH_URL } from "./dsh";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type TabType = "dsh" | "web" | "blank";
 
@@ -100,14 +101,39 @@ export class TabManager {
   }
 
   /** 网页标签应占据的区域（窗口内容区逻辑坐标，与 getBoundingClientRect 对齐） */
-  private tabArea(): { x: number; y: number; w: number; h: number } {
+  private async tabArea(): Promise<{ x: number; y: number; w: number; h: number }> {
     const r = this.stackEl.getBoundingClientRect();
-    return { x: r.left, y: r.top, w: r.width, h: r.height };
+    const off = await this.getYOffset();
+    return { x: r.left, y: r.top + off, w: r.width, h: r.height };
+  }
+
+  /**
+   * macOS：主 webview 的 CSS 视口比窗口内容区矮一个标题栏高度（内容区顶部被安全区内缩）。
+   * 原生子 webview 的坐标系以窗口内容区为原点，因此 getBoundingClientRect 的 y 需补上该偏移，
+   * 否则网页会整体上移、遮住网址栏。结果缓存，窗口 resize 时失效重算。
+   */
+  private yOffsetCache: number | null = null;
+
+  private async getYOffset(): Promise<number> {
+    if (this.yOffsetCache !== null) return this.yOffsetCache;
+    try {
+      const win = getCurrentWindow();
+      const inner = await win.innerSize();
+      const sf = await win.scaleFactor();
+      this.yOffsetCache = Math.max(0, inner.height / sf - window.innerHeight);
+    } catch {
+      this.yOffsetCache = 0;
+    }
+    return this.yOffsetCache;
+  }
+
+  private invalidateYOffset(): void {
+    this.yOffsetCache = null;
   }
 
   private async createWebview(tab: TabData, url: string): Promise<void> {
     if (this.webviews.has(tab.id)) return;
-    const b = this.tabArea();
+    const b = await this.tabArea();
     try {
       await invoke("webview_create", { id: tab.id, url, x: b.x, y: b.y, w: b.w, h: b.h });
       this.webviews.add(tab.id);
@@ -119,7 +145,7 @@ export class TabManager {
   private async showWebview(tab: TabData): Promise<void> {
     await this.createWebview(tab, tab.url);
     if (!this.webviews.has(tab.id)) return;
-    const b = this.tabArea();
+    const b = await this.tabArea();
     try {
       await invoke("webview_show", { id: tab.id, x: b.x, y: b.y, w: b.w, h: b.h });
     } catch (e) {
@@ -172,7 +198,7 @@ export class TabManager {
     }
     // 该标签正处于激活显示状态时，确保位置正确（创建后初次布局）
     if (this.getActive()?.id === tab.id) {
-      const b = this.tabArea();
+      const b = await this.tabArea();
       try {
         await invoke("webview_set_bounds", { id: tab.id, x: b.x, y: b.y, w: b.w, h: b.h });
       } catch {
@@ -331,7 +357,8 @@ export class TabManager {
     this.enqueue(async () => {
       const active = this.getActive();
       if (active && active.type === "web" && this.webviews.has(active.id)) {
-        const b = this.tabArea();
+        this.invalidateYOffset(); // resize 后标题栏偏移不变，但视口尺寸变了，重算一次
+        const b = await this.tabArea();
         try {
           await invoke("webview_set_bounds", { id: active.id, x: b.x, y: b.y, w: b.w, h: b.h });
         } catch {
