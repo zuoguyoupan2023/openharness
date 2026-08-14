@@ -59,5 +59,6 @@ export async function listInstalled(): Promise<InstalledPlugins> {
 }
 
 export function installedNames(p: InstalledPlugins): string[] {
-  return [...Object.keys(p.deps || {}), ...(p.bundles || [])];
+  // deps 与 bundles 可能重叠（bundle 层通常同时是 dependency），去重避免重复 chips
+  return [...new Set([...Object.keys(p.deps || {}), ...(p.bundles || [])])];
 }

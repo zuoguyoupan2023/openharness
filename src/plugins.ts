@@ -33,13 +33,20 @@ const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
 ];
 
 const INDEX_URL = "https://awesome-dsh-plugin.com/plugins.json";
-const CATEGORY_ORDER = ["ui", "session", "tools", "workflow", "notify", "dev", "fun"];
+const CATEGORY_ORDER = ["ui", "theme", "session", "memory", "tools", "skill", "workflow", "notify", "model", "dev", "fun"];
 const VERSION_CACHE_KEY = "oh-plugin-versions";
 const BASELINE_KEY = "oh-plugin-baseline";
 
 export interface PluginCenterOptions {
   /** 动作反馈：切到日志视图并追加一行日志 */
   onAction: (msg: string) => void;
+}
+
+/** 已安装 chip 的版本标签：file:/link: 本地链接显示「本地」；npm spec 原样 */
+function chipVersionLabel(v: string): string {
+  if (!v) return "";
+  if (/^(file:|link:|\.|\/)/.test(v)) return t("plugins.chipLocal");
+  return v;
 }
 
 function $(id: string): HTMLElement {
@@ -136,10 +143,28 @@ export function initPlugins(opts: PluginCenterOptions): void {
       return;
     }
     names.forEach((n) => {
+      const spec = (installed.deps || {})[n];
+      const isDep = spec !== undefined;
+      const label = chipVersionLabel(spec);
       const el = document.createElement("span");
       el.className = "chip";
-      const v = (installed.deps || {})[n];
-      el.innerHTML = v ? `${n} <b>@${v}</b>` : n;
+      // title：file:/link: 规格展示真实路径，方便排查
+      el.title = spec ? `${n}@${spec}` : n;
+      const txt = document.createElement("span");
+      txt.textContent = label ? `${n} @${label}` : n;
+      el.appendChild(txt);
+      // 仅 dependency 可卸载（bundle 层如官方组合包不在此卸载）
+      if (isDep) {
+        const rm = document.createElement("button");
+        rm.className = "chip-rm";
+        rm.title = t("plugins.remove") + " " + n;
+        rm.innerHTML = iconSvg("x");
+        rm.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          performAction(`${t("plugins.remove")} ${n}`, ["plugin", "--profile", "web", "remove", n]);
+        });
+        el.appendChild(rm);
+      }
       els.chips.appendChild(el);
     });
   }

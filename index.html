@@ -563,27 +563,42 @@
     }
     .cat-chip:hover { color: var(--text); }
     .cat-chip.active { background: var(--accent-strong); border-color: var(--accent-border); color: var(--accent-text); }
-    /* 已安装：单行横向滚动，不撑高页面 */
+    /* 已安装：自动换行全部可见，不再被压成一行矮条 */
     .installed-chips {
       display: flex;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
+      align-items: center;
       gap: 6px;
-      overflow-x: auto;
-      padding-bottom: 2px;
+      padding: 4px 0;
     }
-    .installed-chips::-webkit-scrollbar { height: 4px; }
-    .installed-chips::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
     .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       background: var(--card);
       border: 1px solid var(--border-strong);
-      padding: 3px 11px;
+      padding: 5px 12px;
       border-radius: 30px;
-      font-size: 0.76rem;
+      font-size: 0.8rem;
       color: var(--text-bright);
       white-space: nowrap;
-      flex: 0 0 auto;
     }
-    .chip b { color: var(--link); font-weight: 600; }
+    .chip-rm {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+    .chip-rm:hover { background: var(--hover); color: var(--danger); }
+    .chip-rm svg { width: 11px; height: 11px; }
     .official-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));

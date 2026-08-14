@@ -96,6 +96,7 @@ const DICT: Record<string, Entry> = {
   "plugins.install": { zh: "安装", en: "Install" },
   "plugins.update": { zh: "更新", en: "Update" },
   "plugins.remove": { zh: "卸载", en: "Remove" },
+  "plugins.chipLocal": { zh: "本地", en: "local" },
   "plugins.col.name": { zh: "插件", en: "Plugin" },
   "plugins.col.version": { zh: "版本", en: "Version" },
   "plugins.col.status": { zh: "状态", en: "Status" },

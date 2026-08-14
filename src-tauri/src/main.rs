@@ -704,14 +704,19 @@ fn kill_dsh_on_exit(app: &AppHandle) {
     kill_3080(app);
 }
 
-/// 读取 web profile 的 package.json → (dependencies, bundles)
-fn read_web_profile() -> (serde_json::Value, Vec<String>) {
+/// web profile 目录（~/.dsh/profiles/web，遵循 DSH_HOME）
+fn web_profile_dir() -> PathBuf {
     let home = std::env::var("DSH_HOME").unwrap_or_else(|_| {
         std::env::var("HOME")
             .map(|h| format!("{}/.dsh", h))
             .unwrap_or_else(|_| "~/.dsh".to_string())
     });
-    let pkg_path = format!("{}/profiles/web/package.json", home);
+    PathBuf::from(home).join("profiles").join("web")
+}
+
+/// 读取 web profile 的 package.json → (dependencies, bundles)
+fn read_web_profile() -> (serde_json::Value, Vec<String>) {
+    let pkg_path = web_profile_dir().join("package.json");
     let empty: (serde_json::Value, Vec<String>) = (serde_json::json!({}), vec![]);
     let Ok(content) = std::fs::read_to_string(&pkg_path) else {
         return empty;
@@ -739,12 +744,45 @@ fn plugin_installed(pkg: &str) -> bool {
 
 // ============================ 核心：DSH 进程托管 ============================
 
+/// pnpm ≥10 的 workspace-root 兼容：DSH 的 profile 由 `initProfile` 写入
+/// `pnpm-workspace.yaml`（`packages: - .`），使 profile 目录成为 pnpm workspace root；
+/// 而 `dsh plugin add` 内部调 `pnpm add` 时不传 `-w`，pnpm ≥10 会直接报
+/// `ERR_PNPM_ADDING_TO_ROOT` 拒绝写入根依赖——本机与任何新用户都会装不上插件。
+/// 解法：向 profile 写入 `.npmrc` 的 `ignore-workspace-root-check=true`
+/// （pnpm 在 profile 目录内运行时会读取；同时修复用户在终端手动 `dsh plugin` 的场景）。
+/// 写入失败时返回 false，由调用方回退到环境变量注入。
+fn ensure_pnpm_root_add_compat() -> bool {
+    let dir = web_profile_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let rc = dir.join(".npmrc");
+    let key = "ignore-workspace-root-check=true";
+    match std::fs::read_to_string(&rc) {
+        Ok(s) if s.contains(key) => return true,
+        Ok(s) => {
+            let mut next = s.trim_end().to_string();
+            if !next.is_empty() {
+                next.push('\n');
+            }
+            next.push_str(key);
+            next.push('\n');
+            return std::fs::write(&rc, next).is_ok();
+        }
+        Err(_) => std::fs::write(&rc, format!("{key}\n")).is_ok(),
+    }
+}
+
 /// 执行任意 dsh CLI 命令（stdout/stderr 实时推送到日志视图），内部实现
 async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String> {
     let mut cmd = Command::new(resolve_npx(app));
     cmd.arg("--yes").arg("@deepseek-ai/dsh").args(args);
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
+    // 插件管理命令需要 pnpm workspace-root 兼容：优先写 profile .npmrc；
+    // 写入失败（如只读环境）则注入环境变量兜底（pnpm 亦读取 npm_config_* 配置）
+    if !ensure_pnpm_root_add_compat() {
+        cmd.env("npm_config_ignore_workspace_root_check", "true")
+            .env("NPM_CONFIG_IGNORE_WORKSPACE_ROOT_CHECK", "true");
+    }
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1145,12 +1183,7 @@ async fn run_dsh_cmd(app: AppHandle, args: Vec<String>) -> Result<String, String
 /// 读取 web profile 的已安装插件（dependencies + bundles）
 #[tauri::command]
 fn list_installed_plugins() -> Result<serde_json::Value, String> {
-    let home = std::env::var("DSH_HOME").unwrap_or_else(|_| {
-        std::env::var("HOME")
-            .map(|h| format!("{}/.dsh", h))
-            .unwrap_or_else(|_| "~/.dsh".to_string())
-    });
-    let pkg_path = format!("{}/profiles/web/package.json", home);
+    let pkg_path = web_profile_dir().join("package.json");
     let empty = serde_json::json!({
         "deps": {},
         "bundles": [],
