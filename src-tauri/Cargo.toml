@@ -1,0 +1,21 @@
+[package]
+name = "openharness"
+version = "0.1.0"
+description = "OpenHarness —— DeepSeek Harness 桌面壳"
+authors = ["openharness"]
+license = ""
+repository = ""
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 关键：添加 tokio 用于异步子进程管理
+tokio = { version = "1", features = ["full"] }
+# 用于退出时回收 DSH 子进程组（kill(-pgid)）
+libc = "0.2"

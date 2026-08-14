@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek Harness · Tauri 封装方案</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0b1120;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+            display: flex;
+            justify-content: center;
+            padding: 40px 20px;
+            color: #e2e8f0;
+        }
+        .container {
+            max-width: 1100px;
+            width: 100%;
+        }
+        h1 {
+            font-size: 2.6rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+        .sub {
+            font-size: 1.1rem;
+            color: #94a3b8;
+            margin-bottom: 40px;
+            border-left: 4px solid #3b82f6;
+            padding-left: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        @media (max-width: 720px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 24px;
+            padding: 28px 30px;
+            border: 1px solid #334155;
+            box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.6);
+            transition: transform 0.15s ease;
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            border-color: #475569;
+        }
+        .card h2 {
+            font-size: 1.7rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .badge {
+            font-size: 0.75rem;
+            background: #3b82f6;
+            padding: 4px 14px;
+            border-radius: 30px;
+            color: white;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+        .badge.purple {
+            background: #8b5cf6;
+        }
+        .flow {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin-top: 10px;
+        }
+        .step {
+            background: #0f172a;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border-left: 4px solid #3b82f6;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        .step strong {
+            color: #f1f5f9;
+            display: block;
+            font-size: 1rem;
+            margin-bottom: 2px;
+        }
+        .step code {
+            background: #2d3748;
+            padding: 2px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #93c5fd;
+            font-family: "JetBrains Mono", "Fira Code", monospace;
+        }
+        .arrow {
+            text-align: center;
+            color: #475569;
+            font-size: 1.4rem;
+            padding: 4px 0;
+        }
+        .code-block {
+            background: #0f172a;
+            padding: 16px 20px;
+            border-radius: 14px;
+            margin: 16px 0 4px;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 0.85rem;
+            color: #b9c7e5;
+            border: 1px solid #2d3748;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .highlight {
+            background: #22d3ee10;
+            border-left: 4px solid #22d3ee;
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin: 18px 0 8px;
+            color: #cbd5e1;
+        }
+        .highlight strong {
+            color: #67e8f9;
+        }
+        .phase-tag {
+            display: inline-block;
+            background: #2d3748;
+            padding: 4px 16px;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #cbd5e1;
+            letter-spacing: 0.5px;
+            margin-right: 8px;
+        }
+        hr {
+            border: none;
+            border-top: 2px dashed #334155;
+            margin: 40px 0 30px;
+        }
+        .architecture {
+            background: #1e293b;
+            border-radius: 24px;
+            padding: 30px;
+            border: 1px solid #334155;
+            margin-top: 20px;
+        }
+        .architecture h3 {
+            font-size: 1.4rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .arch-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+            text-align: center;
+        }
+        @media (max-width: 600px) {
+            .arch-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .arch-item {
+            background: #0f172a;
+            padding: 20px 10px;
+            border-radius: 16px;
+            border: 1px solid #334155;
+        }
+        .arch-item .icon {
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+        .arch-item .label {
+            font-weight: 600;
+            color: #e2e8f0;
+        }
+        .arch-item .desc {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 6px;
+        }
+        .footer {
+            margin-top: 40px;
+            color: #64748b;
+            font-size: 0.9rem;
+            text-align: center;
+            border-top: 1px solid #1e293b;
+            padding-top: 30px;
+        }
+        .inline-code {
+            background: #2d3748;
+            padding: 1px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            color: #93c5fd;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <h1>⚡ DeepSeek Harness · Tauri 封装蓝图</h1>
+    <div class="sub">
+        📦 将 DSH Web UI 包装为 Mac 原生应用 · 内置终端交互 · 无需浏览器
+    </div>
+
+    <!-- 核心回答：终端在哪？ -->
+    <div class="highlight" style="margin-bottom: 30px;">
+        <strong>✅ 终端在 Tauri 后台进程中运行</strong> —— 当 App 启动时，Rust 后端会 <code>spawn</code> 一个子进程执行 <code>npx @deepseek-ai/dsh web</code>。<br>
+        📡 我们将 <strong>stdout / stderr</strong> 实时流式传输到前端界面，因此“终端”完全嵌入在应用壳内，用户看到的就是一个带日志输出的图形界面。
+    </div>
+
+    <!-- 两阶段方案 Grid -->
+    <div class="grid">
+        <!-- 第一阶段 -->
+        <div class="card">
+            <h2>
+                <span>🚀 第一阶段</span>
+                <span class="badge">MVP</span>
+            </h2>
+            <div style="color: #94a3b8; margin-bottom: 16px; font-size:0.95rem;">
+                启动即运行 · 内置 WebView 加载 DSH 界面
+            </div>
+            <div class="flow">
+                <div class="step">
+                    <strong>1. 应用启动 (Tauri Main)</strong>
+                    Rust 后端执行 <code>std::process::Command</code>，调用 <code>sh -c "npx @deepseek-ai/dsh web"</code>。<br>
+                    <span style="color:#94a3b8; font-size:0.85rem;">✅ 无需 chmod，无需手动打开终端。</span>
+                </div>
+                <div class="arrow">⬇</div>
+                <div class="step">
+                    <strong>2. 监听端口就绪</strong>
+                    通过捕获 stdout 输出，检测到 <code>Running on http://127.0.0.1:3080</code> 即表示服务已启动。
+                </div>
+                <div class="arrow">⬇</div>
+                <div class="step">
+                    <strong>3. 自动导航</strong>
+                    前端 WebView 使用 <code>window.location.href</code> 或 Tauri API 跳转到 <code>http://127.0.0.1:3080</code>。<br>
+                    <span style="color:#94a3b8; font-size:0.85rem;">🔒 完全不依赖外部浏览器，全在 App 窗口内交互。</span>
+                </div>
+            </div>
+            <div style="margin-top: 16px; background:#0f172a; border-radius: 12px; padding: 12px; font-size:0.9rem;">
+                💡 <strong>用户体验：</strong> 双击 .app → 看到启动日志 → 自动跳转到 DSH 聊天界面。
+            </div>
+        </div>
+
+        <!-- 第二阶段 -->
+        <div class="card">
+            <h2>
+                <span>🖥️ 第二阶段</span>
+                <span class="badge purple">专业版</span>
+            </h2>
+            <div style="color: #94a3b8; margin-bottom: 16px; font-size:0.95rem;">
+                终端面板嵌入壳内 · 双向交互
+            </div>
+            <div class="flow">
+                <div class="step">
+                    <strong>1. 分屏 UI 架构</strong>
+                    主区域左侧（70%）：加载 DSH Web 界面；右侧/底部（30%）：<strong>嵌入式终端面板</strong>。
+                </div>
+                <div class="arrow">⬇</div>
+                <div class="step">
+                    <strong>2. 实时日志流</strong>
+                    Rust 后端通过 <code>Channel</code> 将 <code>stdout/stderr</code> 逐行推送到前端，终端面板滚动显示。
+                    <span style="display:block; color:#22d3ee; font-size:0.85rem; margin-top:4px;">🔧 包含 ANSI 颜色转义解析，还原终端原生体验。</span>
+                </div>
+                <div class="arrow">⬇</div>
+                <div class="step">
+                    <strong>3. 命令输入 (进阶)</strong>
+                    在终端面板底部提供输入框，允许用户向 DSH 进程发送 <code>stdin</code> 指令（如重启、调试），实现真正的“壳中交互”。
+                </div>
+            </div>
+            <div style="margin-top: 16px; background:#0f172a; border-radius: 12px; padding: 12px; font-size:0.9rem;">
+                🛠️ <strong>技术栈：</strong> Rust (Tauri) + 前端 (React/Vue) + <code>xterm.js</code> 渲染终端仿真器。
+            </div>
+        </div>
+    </div>
+
+    <!-- 架构总览 -->
+    <div class="architecture">
+        <h3>🧩 全量架构图 (第二阶段终态)</h3>
+        <div class="arch-grid">
+            <div class="arch-item">
+                <div class="icon">🦀</div>
+                <div class="label">Tauri 后端 (Rust)</div>
+                <div class="desc">
+                    管理子进程 · 捕获 I/O · 暴露 IPC 接口
+                </div>
+                <div style="margin-top: 10px; font-size:0.75rem; color:#64748b;">
+                    <code>Command::new("sh")</code>
+                </div>
+            </div>
+            <div class="arch-item">
+                <div class="icon">🌐</div>
+                <div class="label">WebView 主窗口</div>
+                <div class="desc">
+                    左侧加载 <code>http://127.0.0.1:3080</code><br>
+                    (DSH 原生 Web UI)
+                </div>
+            </div>
+            <div class="arch-item">
+                <div class="icon">📟</div>
+                <div class="label">嵌入式终端面板</div>
+                <div class="desc">
+                    右侧/底部实时显示日志<br>
+                    支持 ANSI 色彩 & 输入转发
+                </div>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: center; gap: 20px; margin-top: 20px; flex-wrap: wrap; font-size:0.9rem;">
+            <span style="background:#0f172a; padding:6px 20px; border-radius:30px;">⬆ IPC 通信 (事件/指令)</span>
+            <span style="background:#0f172a; padding:6px 20px; border-radius:30px;">⬇ stdout/stderr 流</span>
+            <span style="background:#0f172a; padding:6px 20px; border-radius:30px;">⟷ 双向消息通道</span>
+        </div>
+    </div>
+
+    <!-- 关键代码片段示意 -->
+    <hr>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+        <div>
+            <h4 style="margin-bottom: 8px; color:#94a3b8;">📄 启动子进程 (Rust)</h4>
+            <div class="code-block">
+use tauri::api::process::Command;
+
+#[tauri::command]
+fn start_dsh() -> Result&lt;String, String&gt; {
+    let mut cmd = Command::new("sh")
+        .args(&["-c", "npx @deepseek-ai/dsh web"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    
+    // 通过 channel 向前端推送输出
+    Ok("进程已启动".into())
+}
+            </div>
+        </div>
+        <div>
+            <h4 style="margin-bottom: 8px; color:#94a3b8;">📟 前端接收日志 (JS)</h4>
+            <div class="code-block">
+import { listen } from '@tauri-apps/api/event';
+
+listen('dsh-output', (event) => {
+    const payload = event.payload;
+    // 追加到终端面板 (如 xterm.js)
+    terminal.write(payload);
+});
+
+// 检测服务就绪后自动跳转
+if (output.includes('Running on')) {
+    window.location.href = 'http://127.0.0.1:3080';
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 附加说明：权限与首次运行 -->
+    <div style="background: #1e293b; border-radius: 20px; padding: 24px 28px; margin-top: 30px; border: 1px solid #334155;">
+        <div style="display: flex; gap: 14px; align-items: flex-start;">
+            <span style="font-size: 2rem;">🔑</span>
+            <div>
+                <strong style="font-size: 1.1rem;">关于「权限」与「首次运行」</strong>
+                <p style="color: #94a3b8; margin-top: 8px; line-height: 1.7;">
+                    Tauri 应用本身是 <strong>已签名</strong> 的 .app 包，双击即可运行。<br>
+                    首次启动时，<code>npx</code> 会自动检测并下载 <code>@deepseek-ai/dsh</code> 包（耗时取决于网络）。<br>
+                    整个过程在 App 的嵌入式终端面板内可视化显示，用户无需打开系统终端或执行任何 <code>chmod</code> 操作。
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        ⚡ 按此方案开发，即可获得一个双击即用、内置终端、无需浏览器的 DeepSeek Harness 原生客户端。
+    </div>
+
+</div>
+</body>
+</html>

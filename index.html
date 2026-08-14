@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenHarness</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      background: #0b1120;
+      font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #e2e8f0;
+      display: flex;
+    }
+
+    /* ===== 左侧边栏 ===== */
+    #sidebar {
+      width: 210px;
+      flex: 0 0 210px;
+      background: #0f172a;
+      border-right: 1px solid #1e293b;
+      display: flex;
+      flex-direction: column;
+      padding: 18px 14px;
+      user-select: none;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px 18px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 14px;
+    }
+    .brand .logo { font-size: 1.7rem; }
+    .brand .name {
+      font-size: 1.05rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.2;
+    }
+    .brand .ver { font-size: 0.68rem; color: #64748b; }
+    nav { display: flex; flex-direction: column; gap: 6px; }
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      background: transparent;
+      border: 1px solid transparent;
+      color: #94a3b8;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 0.92rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .nav-btn:hover { background: #1e293b; color: #e2e8f0; }
+    .nav-btn.active {
+      background: #1d4ed8;
+      border-color: #2563eb;
+      color: #fff;
+      box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.6);
+    }
+    .sidebar-foot {
+      margin-top: auto;
+      padding: 12px 8px 2px;
+      border-top: 1px solid #1e293b;
+      font-size: 0.8rem;
+      color: #64748b;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dsh-status { display: flex; align-items: center; gap: 8px; color: #94a3b8; }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #64748b;
+      display: inline-block;
+      flex: 0 0 10px;
+    }
+    .dot.waiting { background: #facc15; animation: pulse 1.5s infinite; }
+    .dot.running { background: #22c55e; }
+    .dot.error { background: #ef4444; }
+    @keyframes pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    /* ===== 内容区 ===== */
+    #content {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+    }
+    .view {
+      display: none;
+      position: absolute;
+      inset: 0;
+      flex-direction: column;
+    }
+    .view.active { display: flex; }
+
+    /* ===== 对话视图：标签栏 + 网址栏 + iframe 池 ===== */
+    #tabbar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 10px;
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+      flex: 0 0 auto;
+      overflow-x: auto;
+    }
+    #tabbar::-webkit-scrollbar { height: 4px; }
+    #tabbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    #tab-list { display: flex; gap: 4px; flex: 1; min-width: 0; }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+      cursor: pointer;
+      max-width: 190px;
+      white-space: nowrap;
+      border: 1px solid transparent;
+      user-select: none;
+    }
+    .tab:hover { background: #1e293b; color: #e2e8f0; }
+    .tab.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+    .tab-title { overflow: hidden; text-overflow: ellipsis; }
+    .tab-x {
+      background: none;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 2px;
+      opacity: 0.7;
+      flex: 0 0 auto;
+    }
+    .tab-x:hover { opacity: 1; }
+    #tab-new {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #tab-new:hover { background: #334155; }
+
+    #urlbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+      flex: 0 0 auto;
+    }
+    .url-btn {
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    .url-btn:hover { background: #334155; }
+    #url-input {
+      flex: 1;
+      min-width: 0;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 7px 14px;
+      font-size: 0.86rem;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      outline: none;
+    }
+    #url-input:focus { border-color: #2563eb; }
+    .url-go {
+      flex: 0 0 auto;
+      background: #1d4ed8;
+      border: none;
+      color: #fff;
+      padding: 7px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .url-go:hover { background: #2563eb; }
+
+    #iframe-stack { flex: 1; min-height: 0; position: relative; }
+    .tab-pane { position: absolute; inset: 0; display: none; flex-direction: column; }
+    .tab-frame { flex: 1; width: 100%; border: none; background: #fff; }
+    .tab-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: #0b1120;
+      color: #64748b;
+      font-size: 0.95rem;
+    }
+    .spinner {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 4px solid #1e293b;
+      border-top-color: #3b82f6;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .newtab { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 30px; }
+    .newtab-title { font-size: 1.6rem; font-weight: 700; }
+    .newtab-sub { font-size: 0.9rem; color: #64748b; }
+    .quick-links { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 680px; }
+    .quick-link {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 10px 18px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.15s;
+    }
+    .quick-link:hover { background: #334155; border-color: #475569; transform: translateY(-1px); }
+
+    /* ===== 日志视图 ===== */
+    #view-logs { padding: 20px 24px; gap: 14px; overflow: hidden; }
+    #log-area {
+      background: #0f172a;
+      border-radius: 16px;
+      padding: 18px 22px;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.82rem;
+      line-height: 1.75;
+      color: #cbd5e1;
+      border: 1px solid #2d3748;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #log-area::-webkit-scrollbar { width: 6px; }
+    #log-area::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.88rem;
+      color: #94a3b8;
+      flex: 0 0 auto;
+    }
+    .status-bar .dot { width: 12px; height: 12px; flex-basis: 12px; }
+    .btn-retry {
+      margin-left: auto;
+      background: #3b82f6;
+      border: none;
+      color: white;
+      padding: 8px 22px;
+      border-radius: 30px;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.2s;
+    }
+    .btn-retry:hover { background: #2563eb; }
+
+    /* ===== 插件视图 ===== */
+    #view-plugins { padding: 22px 26px; gap: 16px; overflow-y: auto; }
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-title .badge {
+      font-size: 0.72rem;
+      background: #1e293b;
+      color: #94a3b8;
+      padding: 3px 12px;
+      border-radius: 30px;
+      font-weight: 400;
+    }
+    .plugins-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .plugins-actions button {
+      background: #1d4ed8;
+      border: none;
+      color: #fff;
+      padding: 8px 20px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .plugins-actions button:hover { background: #2563eb; }
+    .plugins-actions button:disabled { opacity: 0.5; cursor: wait; }
+    #plugins-search {
+      width: 280px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 7px 14px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    #plugins-search:focus { border-color: #2563eb; }
+    .plugin-cats { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cat-chip {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 5px 14px;
+      border-radius: 30px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .cat-chip:hover { color: #e2e8f0; }
+    .cat-chip.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+    .installed-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 5px 14px;
+      border-radius: 30px;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+    }
+    .chip b { color: #93c5fd; font-weight: 600; }
+    .official-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    .official-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .official-name {
+      font-family: 'JetBrains Mono', monospace;
+      color: #93c5fd;
+      font-weight: 600;
+      font-size: 0.85rem;
+      word-break: break-all;
+    }
+    .official-desc { font-size: 0.78rem; color: #64748b; }
+    .official-card button {
+      margin-top: auto;
+      align-self: flex-start;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 5px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .official-card button:hover:not(:disabled) { background: #334155; }
+    .official-card button:disabled { opacity: 0.5; }
+    .plugin-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #1e293b;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #334155;
+    }
+    .plugin-table th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      background: #0f172a;
+      font-weight: 500;
+      border-bottom: 1px solid #334155;
+    }
+    .plugin-table td {
+      padding: 11px 14px;
+      font-size: 0.86rem;
+      border-bottom: 1px solid #1e293b;
+      vertical-align: middle;
+    }
+    .plugin-table tr:last-child td { border-bottom: none; }
+    .plugin-table .pkg { font-family: 'JetBrains Mono', monospace; }
+    .plugin-table .pkg a { color: #93c5fd; font-weight: 600; text-decoration: none; }
+    .plugin-table .pkg a:hover { text-decoration: underline; }
+    .plugin-table .ver { color: #94a3b8; font-size: 0.8rem; }
+    .plugin-table .desc { color: #64748b; font-size: 0.8rem; }
+    .tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      padding: 2px 10px;
+      border-radius: 30px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tag.installed { background: #14532d; color: #4ade80; }
+    .tag.update { background: #7c2d12; color: #fb923c; animation: pulse 1.5s infinite; }
+    .tag.latest { background: #1e293b; color: #94a3b8; }
+    .install-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 5px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      margin-left: 6px;
+    }
+    .install-btn:hover { background: #334155; }
+    .install-btn:disabled { opacity: 0.4; cursor: wait; }
+    .plugin-loading { color: #64748b; font-size: 0.85rem; }
+
+    /* ===== 设置视图 ===== */
+    #view-settings { padding: 22px 26px; gap: 16px; overflow-y: auto; }
+    .setting-group {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: 720px;
+    }
+    .setting-label { font-size: 1rem; font-weight: 600; }
+    .setting-desc { font-size: 0.82rem; color: #94a3b8; line-height: 1.6; }
+    .setting-radio {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      cursor: pointer;
+    }
+    .setting-radio input[type="radio"] { accent-color: #3b82f6; }
+    #registry-custom {
+      flex: 1;
+      max-width: 340px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+    }
+    #registry-custom:focus { border-color: #2563eb; }
+    .setting-row { display: flex; align-items: center; gap: 12px; }
+    .setting-row button, .setting-group > button {
+      align-self: flex-start;
+      background: #1d4ed8;
+      border: none;
+      color: #fff;
+      padding: 8px 20px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .setting-row button:hover, .setting-group > button:hover { background: #2563eb; }
+    .setting-saved { font-size: 0.82rem; color: #4ade80; }
+  </style>
+</head>
+<body>
+  <!-- 左侧边栏 -->
+  <aside id="sidebar">
+    <div class="brand">
+      <span class="logo">🧠</span>
+      <div>
+        <div class="name">OpenHarness</div>
+        <div class="ver">DeepSeek Harness 桌面版 · v0.3</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav-btn active" data-view="chat">💬 对话</button>
+      <button class="nav-btn" data-view="logs">🖥️ 日志</button>
+      <button class="nav-btn" data-view="plugins">🧩 插件</button>
+      <button class="nav-btn" data-view="settings">⚙️ 设置</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="dsh-status">
+        <span class="dot waiting" id="side-dot"></span>
+        <span id="side-status">DSH 启动中…</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 内容区 -->
+  <main id="content">
+    <!-- 对话（多标签页） -->
+    <section id="view-chat" class="view active">
+      <div id="tabbar">
+        <div id="tab-list"></div>
+        <button id="tab-new" title="新建标签页">＋</button>
+      </div>
+      <div id="urlbar">
+        <button class="url-btn" id="url-back" title="后退">←</button>
+        <button class="url-btn" id="url-fwd" title="前进">→</button>
+        <button class="url-btn" id="url-reload" title="刷新">🔄</button>
+        <button class="url-btn" id="url-home" title="新标签页主页">🏠</button>
+        <input id="url-input" placeholder="输入网址或搜索内容，回车前往…" spellcheck="false" autocomplete="off" />
+        <button class="url-go" id="url-go">前往</button>
+      </div>
+      <div id="iframe-stack"></div>
+    </section>
+
+    <!-- 日志 -->
+    <section id="view-logs" class="view">
+      <div id="log-area">
+        ⏳ 正在初始化 DSH 环境...
+        <br />📦 首次运行会自动下载依赖，请耐心等待；国内网络慢可在「设置」切换淘宝镜像源。
+      </div>
+      <div class="status-bar">
+        <span class="dot waiting" id="indicator"></span>
+        <span id="status-text">🚀 启动中，等待服务就绪...</span>
+        <button class="btn-retry" id="retry-btn">🔄 重新启动</button>
+      </div>
+    </section>
+
+    <!-- 插件中心 -->
+    <section id="view-plugins" class="view">
+      <div class="section-title">
+        🧩 插件中心
+        <span class="badge">安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成</span>
+      </div>
+      <div class="plugins-actions">
+        <button id="plugins-refresh">📡 刷新插件索引</button>
+        <input id="plugins-search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
+      </div>
+      <div id="plugin-cats" class="plugin-cats"></div>
+
+      <div class="section-title" style="font-size:1.05rem; margin-top:6px;">
+        已安装（web profile）
+        <span class="badge" id="profile-path"></span>
+      </div>
+      <div class="installed-chips" id="installed-chips">加载中…</div>
+
+      <div class="section-title" style="font-size:1.05rem; margin-top:10px;">
+        官方组合包
+        <span class="badge">@deepseek-ai 核心包</span>
+      </div>
+      <div class="official-grid" id="official-grid"></div>
+
+      <div class="section-title" style="font-size:1.05rem; margin-top:10px;">
+        社区插件（awesome-dsh-plugin）
+        <span class="badge" id="plugin-count">-</span>
+      </div>
+      <div id="plugin-loading" class="plugin-loading">⏳ 正在获取插件索引…</div>
+      <table class="plugin-table" id="plugin-table" style="display:none;">
+        <thead>
+          <tr><th>插件</th><th>版本</th><th>状态</th><th>描述</th><th></th></tr>
+        </thead>
+        <tbody id="plugin-tbody"></tbody>
+      </table>
+    </section>
+
+    <!-- 设置 -->
+    <section id="view-settings" class="view">
+      <div class="section-title">⚙️ 设置</div>
+
+      <div class="setting-group">
+        <div class="setting-label">npm 镜像源</div>
+        <div class="setting-desc">
+          影响首次下载 DSH 与安装插件（npx / pnpm 全链路生效）。已缓存的包不受影响；
+          镜像对新发布包的同步可能有几分钟延迟，若安装报 404 可到 npmmirror.com/sync 手动触发同步。
+        </div>
+        <label class="setting-radio"><input type="radio" name="registry" value="" /> 官方默认（registry.npmjs.org）</label>
+        <label class="setting-radio"><input type="radio" name="registry" value="https://registry.npmmirror.com" /> 淘宝 npmmirror（国内加速，推荐）</label>
+        <label class="setting-radio"><input type="radio" name="registry" value="__custom" /> 自定义：
+          <input id="registry-custom" placeholder="https://registry.example.com" spellcheck="false" />
+        </label>
+        <div class="setting-row">
+          <button id="registry-save">💾 保存</button>
+          <span id="registry-saved" class="setting-saved"></span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">DSH 服务</div>
+        <div class="setting-desc">重启 DSH 使插件安装 / 卸载 / 更新及镜像配置生效（对话中的会话会中断）。</div>
+        <button id="settings-restart">🔄 重启 DSH</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
