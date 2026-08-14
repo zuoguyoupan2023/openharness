@@ -270,6 +270,224 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ============================ 多 webview（网页标签 · 阶段 2） ============================
+// 用户自开的网页标签使用 Tauri 原生子 webview（不受 iframe X-Frame-Options 拒嵌限制）；
+// DSH 标签保持 iframe（稳定、不丢会话）。需启用 tauri 的 unstable feature。
+// 参考官方 multiwebview 示例：在 async 命令内调用 add_child，避免阻塞主线程死锁。
+
+use std::collections::HashMap;
+use tauri::webview::NewWindowResponse;
+
+/// 已创建的原生子 webview 注册表（key = 标签页 id，全 app 唯一）
+struct WebviewRegistry(Mutex<HashMap<String, tauri::Webview>>);
+
+#[derive(Clone, serde::Serialize)]
+struct WebviewEvent {
+    id: String,
+    url: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct WebviewTitleEvent {
+    id: String,
+    title: String,
+}
+
+fn main_window(app: &AppHandle) -> Result<tauri::Window, String> {
+    app.get_window("main")
+        .ok_or_else(|| "❌ 主窗口不存在".to_string())
+}
+
+fn parse_http_url(raw: &str) -> Result<tauri::Url, String> {
+    let url: tauri::Url = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("❌ URL 解析失败: {}", e))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("❌ 仅支持 http/https 地址".into());
+    }
+    Ok(url)
+}
+
+fn get_webview(
+    state: &tauri::State<'_, WebviewRegistry>,
+    id: &str,
+) -> Result<tauri::Webview, String> {
+    state
+        .0
+        .lock()
+        .unwrap()
+        .get(id)
+        .cloned()
+        .ok_or_else(|| "❌ webview 不存在".to_string())
+}
+
+/// 创建网页标签的原生子 webview（创建后隐藏，由 webview_show 定位显示；幂等）
+#[tauri::command]
+async fn webview_create(
+    app: AppHandle,
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+    url: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    {
+        let reg = state.0.lock().unwrap();
+        if reg.contains_key(&id) {
+            return Ok(());
+        }
+    }
+    let parsed = parse_http_url(&url)?;
+    let label = id.clone();
+    let label_nav = label.clone();
+    let label_new = label.clone();
+    let label_title = label.clone();
+    let app_nav = app.clone();
+    let app_new = app.clone();
+    let app_title = app.clone();
+    let builder = tauri::WebviewBuilder::new(label.clone(), tauri::WebviewUrl::External(parsed))
+        .on_navigation(move |u| {
+            // 导航开始（链接点击 / 重定向 / 前进后退）：同步网址栏与历史栈
+            let _ = app_nav.emit(
+                "webview-nav",
+                WebviewEvent {
+                    id: label_nav.clone(),
+                    url: u.to_string(),
+                },
+            );
+            true
+        })
+        .on_new_window(move |u, _features| {
+            // window.open / target=_blank：不开新 OS 窗口，交给前端开新标签
+            let _ = app_new.emit(
+                "webview-new-window",
+                WebviewEvent {
+                    id: label_new.clone(),
+                    url: u.to_string(),
+                },
+            );
+            NewWindowResponse::Deny
+        })
+        .on_document_title_changed(move |_wv, title| {
+            let _ = app_title.emit(
+                "webview-title",
+                WebviewTitleEvent {
+                    id: label_title.clone(),
+                    title,
+                },
+            );
+        });
+    let window = main_window(&app)?;
+    let webview = window
+        .add_child(
+            builder,
+            tauri::LogicalPosition::new(x, y),
+            tauri::LogicalSize::new(w, h),
+        )
+        .map_err(|e| format!("❌ 创建 webview 失败: {}", e))?;
+    // 默认隐藏：由前端在激活标签时调用 webview_show 显示
+    let _ = webview.hide();
+    state.0.lock().unwrap().insert(id, webview);
+    Ok(())
+}
+
+/// 定位并显示网页标签的原生 webview（坐标为窗口内容区逻辑坐标）
+#[tauri::command]
+async fn webview_show(
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.set_position(tauri::LogicalPosition::new(x, y))
+        .map_err(|e| format!("❌ 定位 webview 失败: {}", e))?;
+    wv.set_size(tauri::LogicalSize::new(w, h))
+        .map_err(|e| format!("❌ 调整 webview 尺寸失败: {}", e))?;
+    wv.show().map_err(|e| format!("❌ 显示 webview 失败: {}", e))?;
+    // kick：重设一次尺寸，规避 macOS 多 webview 渲染白屏（tauri#10011）
+    let _ = wv.set_size(tauri::LogicalSize::new(w, h));
+    Ok(())
+}
+
+/// 仅更新位置/尺寸（窗口 resize 时由前端调用）
+#[tauri::command]
+async fn webview_set_bounds(
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.set_position(tauri::LogicalPosition::new(x, y))
+        .map_err(|e| format!("❌ 定位 webview 失败: {}", e))?;
+    wv.set_size(tauri::LogicalSize::new(w, h))
+        .map_err(|e| format!("❌ 调整 webview 尺寸失败: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn webview_hide(state: tauri::State<'_, WebviewRegistry>, id: String) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.hide().map_err(|e| format!("❌ 隐藏 webview 失败: {}", e))
+}
+
+/// 导航到指定地址（网址栏输入 / 前进后退）
+#[tauri::command]
+async fn webview_navigate(
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+    url: String,
+) -> Result<(), String> {
+    let parsed = parse_http_url(&url)?;
+    let wv = get_webview(&state, &id)?;
+    wv.navigate(parsed)
+        .map_err(|e| format!("❌ 导航失败: {}", e))
+}
+
+#[tauri::command]
+async fn webview_back(state: tauri::State<'_, WebviewRegistry>, id: String) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.eval("history.back()")
+        .map_err(|e| format!("❌ 后退失败: {}", e))
+}
+
+#[tauri::command]
+async fn webview_forward(
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.eval("history.forward()")
+        .map_err(|e| format!("❌ 前进失败: {}", e))
+}
+
+#[tauri::command]
+async fn webview_reload(
+    state: tauri::State<'_, WebviewRegistry>,
+    id: String,
+) -> Result<(), String> {
+    let wv = get_webview(&state, &id)?;
+    wv.eval("location.reload()")
+        .map_err(|e| format!("❌ 刷新失败: {}", e))
+}
+
+/// 关闭并销毁网页标签的原生 webview（幂等）
+#[tauri::command]
+async fn webview_close(state: tauri::State<'_, WebviewRegistry>, id: String) -> Result<(), String> {
+    if let Some(wv) = state.0.lock().unwrap().remove(&id) {
+        let _ = wv.close();
+    }
+    Ok(())
+}
+
 // ============================ Tauri 命令 ============================
 
 /// 启动 DSH：若 3080 已在运行则直接连接；否则先预装插件，再 spawn dsh web
@@ -368,13 +586,23 @@ fn list_installed_plugins() -> Result<serde_json::Value, String> {
 fn main() {
     tauri::Builder::default()
         .manage(DshPid(Mutex::new(None)))
+        .manage(WebviewRegistry(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,
             run_dsh_cmd,
             list_installed_plugins,
             get_settings,
-            set_registry
+            set_registry,
+            webview_create,
+            webview_show,
+            webview_set_bounds,
+            webview_hide,
+            webview_navigate,
+            webview_back,
+            webview_forward,
+            webview_reload,
+            webview_close
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

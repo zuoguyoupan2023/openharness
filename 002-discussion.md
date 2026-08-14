@@ -76,3 +76,18 @@ const AUTO_INSTALL_PLUGINS: &[&str] = &["adhdgofly-dsh-ext"];
 
 - **卡死问题（2026-08-14）**：`main.ts` 中 `new TabManager(...)` 的构造函数同步触发 `onActiveChange` 回调，而回调引用尚未赋值的 `const tabManager` → TDZ `ReferenceError`，boot() 在绑定导航按钮 / 调用 `start_dsh` 之前中断，导致：卡在 DSH 等待页、左侧按钮无响应、DSH 从未自启（3080 仅靠外部手动实例支撑）。
 - 修复：TabManager 移除外部回调，内部直接同步网址栏；main.ts 增加 `window.onerror` / `unhandledrejection` 兜底（异常写入日志视图）；`dsh-exit` 后自动探测外部 3080 并直连。
+
+## 10. 多标签阶段 2：原生 webview（2026-08-14 实现）
+
+**决策**：网页标签升级为 Tauri 原生子 webview（`Window::add_child(WebviewBuilder)`），DSH 标签保持 iframe。背景：白屏经实测确认是目标站点 `X-Frame-Options`/CSP 拒嵌 iframe（npmjs `SAMEORIGIN`、GitHub `deny`、Google `SAMEORIGIN`；Bing / awesome-dsh-plugin 无限制），与 app 网络无关（插件中心 fetch 外部 API 正常）。
+
+**关键踩坑**：
+
+1. **`add_child` 需要 `tauri` 的 `unstable` feature**（Cargo.toml 增加 `"unstable"`）。
+2. **必须在 async 命令里调用 `add_child`**：其内部 `run_on_main_thread` + 阻塞 recv，若同步命令在主线程调用会死锁（官方示例即为 `async fn`）。
+3. **子 webview 显隐**用 `Webview::hide/show`（仅隐藏自身，不动父窗口）；定位用 `LogicalPosition/LogicalSize`（前端 `getBoundingClientRect` 1:1 传入；macOS 下 CSS px == 逻辑 px）。
+4. **导航同步**：`on_navigation`（每次导航开始）→ `webview-nav` 事件 → 前端更新网址栏/历史栈（同 URL 去重）；`on_new_window` → `Deny` + `webview-new-window` 事件 → 自动开新标签；`on_document_title_changed` → 标签标题。
+5. **前端 IPC 串行队列**：激活/导航/关闭全部入队，避免 async invoke 乱序（快速连续操作不串台）。
+6. **视图切换**：离开对话视图必须隐藏所有原生 webview（否则浮在日志/插件/设置视图之上）。
+7. **白屏规避**（tauri#10011）：`webview_show` 末尾重设一次尺寸 kick；窗口 resize 前端去抖（150ms）重算 bounds。
+8. 子 webview 是纯浏览（不注入 IPC 权限），无需 capability（tauri#10317 仅影响运行时 webview 的 IPC）。

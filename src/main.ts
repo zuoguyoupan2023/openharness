@@ -8,6 +8,9 @@ function $(id: string): HTMLElement {
   return document.getElementById(id)!;
 }
 
+/** 模块级引用：switchView 切换视图时联动原生 webview 显隐 */
+let tabManager: TabManager;
+
 function appendLog(msg: string): void {
   const logArea = $("log-area");
   logArea.textContent += msg + "\n";
@@ -28,6 +31,11 @@ function switchView(name: string): void {
   document.querySelectorAll<HTMLElement>(".view").forEach((v) => {
     v.classList.toggle("active", v.id === "view-" + name);
   });
+  // 原生 webview 只应出现在对话视图：离开时隐藏，回来时恢复
+  if (tabManager) {
+    if (name === "chat") tabManager.restoreActiveWebview();
+    else tabManager.hideAllWebviews();
+  }
 }
 
 async function launch(): Promise<void> {
@@ -54,7 +62,8 @@ async function boot(): Promise<void> {
   onLog(appendLog);
 
   // ===== 多标签页（对话视图） =====
-  const tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
+  tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
+  void tabManager.initEvents(); // 注册原生 webview 事件（导航/新窗口/标题）
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));
   $("url-home").addEventListener("click", () => tabManager.addTab("blank"));
@@ -67,6 +76,13 @@ async function boot(): Promise<void> {
   $("url-back").addEventListener("click", () => tabManager.goBack());
   $("url-fwd").addEventListener("click", () => tabManager.goForward());
   $("url-reload").addEventListener("click", () => tabManager.reload());
+
+  // 窗口尺寸变化 → 重算网页标签的原生 webview 位置（150ms 去抖）
+  let resizeTimer: number | undefined;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => tabManager.refreshActiveWebviewBounds(), 150);
+  });
 
   // ===== 视图切换 =====
   document.querySelectorAll<HTMLElement>(".nav-btn").forEach((btn) => {

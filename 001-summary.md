@@ -15,7 +15,7 @@
 | 3 | Rust 后端托管 DSH 子进程（启动 / 日志流 / 退出回收） | ✅ |
 | 4 | 端口探测：3080 已在运行（含用户手动启动的外部实例）则直接连接，不重复启动 | ✅ |
 | 5 | 就绪检测：匹配 DSH 输出后自动切到对话视图 | ✅ |
-| 6 | **多标签页（阶段 1：iframe 池）**：标签栏 + 新建/关闭 + 网址栏（后退/前进/刷新/主页）+ 新标签页快捷入口 + localStorage 持久化 | ✅ |
+| 6 | **多标签页（阶段 2：原生 webview）**：标签栏 + 新建/关闭 + 网址栏（后退/前进/刷新/主页）+ 历史栈 + 新标签页 + localStorage 持久化；**网页标签为 Tauri 原生子 webview**（Google/GitHub 等不再白屏），DSH 标签保持 iframe | ✅ |
 | 7 | DSH 标签：未就绪显示等待动画；就绪自动加载；**重启后自动重连** | ✅ |
 | 8 | **插件中心**：以 awesome-dsh-plugin.com/plugins.json 为主索引（143 个社区插件，CORS 开放）+ 分类筛选 + 搜索 + npm 版本拉取（npmjs → npmmirror 回退 + 本地缓存） | ✅ |
 | 9 | 插件生命周期：安装 / 更新 / 卸载（`dsh plugin --profile web`）+ **完成后自动重启 DSH 生效** | ✅ |
@@ -36,7 +36,7 @@
 ┌────────────────────────────── Tauri 应用（单窗口） ──────────────────────────────┐
 │  ┌─────────┐  ┌─────────────────────────────────────────────────────────────┐  │
 │  │ 侧边栏   │  │  内容区（四视图切换）                                        │  │
-│  │ 对话/日志 │  │  💬 对话：标签栏 + 网址栏 + iframe 池（DSH 标签 + 网页标签）  │  │
+│  │ 对话/日志 │  │  💬 对话：标签栏 + 网址栏 + iframe（DSH 标签）+ 原生子 webview（网页标签）  │  │
 │  │ /插件/设置│  │  🖥️ 日志：日志区 + 状态条 + 重新启动按钮                     │  │
 │  │ DSH状态灯 │  │  🧩 插件：已安装 + 官方组合包 + 社区插件表（分类/搜索/装卸更） │  │
 │  └─────────┘  │  ⚙️ 设置：npm 镜像源（官方/淘宝/自定义）+ 重启 DSH            │  │
@@ -53,6 +53,9 @@
         │  · get_settings / set_registry：镜像配置落盘    │
         │    → spawn 时注入 npm_config_registry（级联）  │
         │  · list_installed_plugins：读 web profile     │
+        │  · 多 webview：create/show/hide/set_bounds/   │
+        │    navigate/back/forward/reload/close 命令 +   │
+        │    导航/新窗口/标题事件（tauri unstable）       │
         │  · 日志文件尾随 → dsh-log；就绪 → dsh-ready     │
         │  · 退出时 kill(-pgid) 整组回收                 │
         └──────────────────────┬──────────────────────┘
@@ -68,7 +71,7 @@
 1. **日志走文件不走管道**：子进程 stdout/stderr 重定向到临时目录 `openharness-dsh-N.log`，前端尾部跟踪（250ms 轮询）——app 重启/被杀不影响 DSH 存活。
 2. **端口探测防冲突**：`start_dsh` 先探测 3080，通了直接 `dsh-ready`（含用户手动启动的外部 DSH），不通才 spawn；`restart_dsh` 等端口释放后再启动。
 3. **进程组回收**：`process_group(0)` + 退出时 `kill(-pgid, SIGKILL)`；仅回收自启的 DSH，外部实例不受影响。
-4. **多标签 iframe 池（阶段 1）**：每个标签一个 iframe，切换 `display` 显隐保持会话；网址栏自动补全 `https://`、非 URL 走 Bing 搜索（国内可用）；**已知限制：多数网站被 X-Frame-Options/CSP 拒嵌（白屏）→ 阶段 2 计划升级原生 webview（见 001-plan P0）**。
+4. **多标签（阶段 2：原生 webview）**：DSH 标签保持 iframe（稳定不丢会话）；用户网页标签用 `Window::add_child(WebviewBuilder)` 原生子 webview（`tauri unstable` feature），不受 `X-Frame-Options`/CSP 拒嵌限制；前端 IPC 串行队列管理创建/显隐/定位，`on_navigation`/`on_new_window`/`on_document_title_changed` 事件同步网址栏/历史/新标签/标题；窗口 resize 去抖重算 bounds。
 5. **就绪检测**：匹配 `dsh web:` / `127.0.0.1:3080` / running on / listening 并从行内解析 URL。
 6. **插件索引来自 awesome-dsh-plugin.com/plugins.json**（CORS 开放，143+ 社区插件）+ npm registry 拉版本（npmmirror 回退）；不再是仅搜 `@deepseek-ai`。
 7. **插件安装走官方 CLI** + 完成后自动 `restart_dsh` 生效。
@@ -89,7 +92,7 @@
 | `index.html` | 壳 UI：四视图 + 标签栏/网址栏/插件中心/设置页（样式内联） |
 | `src/main.ts` | 应用入口：boot 流程、视图切换、DSH 事件接线、错误兜底 |
 | `src/dsh.ts` | DSH 生命周期 API + 事件总线（log/ready/exit 订阅） |
-| `src/tabs.ts` | 多标签管理器：iframe 池、网址栏、历史栈、新标签页、持久化 |
+| `src/tabs.ts` | 多标签管理器：DSH iframe 标签 + 网页原生 webview 标签（IPC 串行队列、网址栏、历史栈、事件同步）、新标签页、持久化 |
 | `src/plugins.ts` | 插件中心：awesome 索引、分类/搜索、版本、装/卸/更 + 重启 |
 | `src/settings.ts` | 设置视图：镜像源选择、保存、重启 DSH |
 | `src/config.ts` | 设置常量（官方/淘宝源）与设置 API |
@@ -102,4 +105,4 @@ npm run tauri dev     # 开发（热重启，秒级）
 npm run tauri build   # 打包 .app（尚未执行）
 ```
 
-> 已知边界：关闭 app 会连带关闭**自启**的 DSH（进程组回收）；若 3080 是外部手动启动的实例，关闭 app 不影响它。多标签阶段 1 用 iframe，多数第三方网站拒嵌（白屏），阶段 2 升级原生 webview 解决。
+> 已知边界：关闭 app 会连带关闭**自启**的 DSH（进程组回收）；若 3080 是外部手动启动的实例，关闭 app 不影响它。原生 webview 定位使用逻辑坐标（macOS 1:1），Windows 高分屏缩放可能偏移（当前仅 macOS 目标）。

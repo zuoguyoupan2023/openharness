@@ -8,7 +8,7 @@
 
 ## ▶ 接下来该做什么（一句话版）
 
-**先补两个 P0 短板：① 多标签阶段 2（原生 webview，解决网页白屏）② 插件中心收尾（详情页 + 自动更新检查）；然后进 P1（终端面板 → 工作区/权限模式），最后 P2 打包发布。** 详细排期见文末。
+**P0 已全部完成（多标签阶段 2 原生 webview + 插件发布联动）；接下来：① P0 插件中心收尾（详情页 + 自动更新检查 + 缓存落盘）② 然后进 P1（终端面板 → 工作区/权限模式），最后 P2 打包发布。** 详细排期见文末。
 
 ---
 
@@ -16,6 +16,7 @@
 
 - [x] 改名 openharness（B 标准：productName / identifier / crate / 品牌 / 日志前缀）
 - [x] 多标签页阶段 1：iframe 池 + 标签栏 + 网址栏 + 历史栈 + 新标签页 + localStorage 持久化
+- [x] **多标签页阶段 2：网页标签升级 Tauri 原生子 webview**（`tauri::Window::add_child`，`unstable` feature；DSH 标签保持 iframe）——Google / GitHub / npm 等不再白屏；`window.open`/`target=_blank` 自动开新标签；导航/标题事件同步网址栏与标签标题
 - [x] 插件中心基础：awesome-dsh-plugin 索引（143 插件）+ 分类/搜索 + npm 版本（npmmirror 回退）+ 装/卸/更 + 自动重启生效 + 官方组合包区
 - [x] 设置视图：npm 镜像源（官方/淘宝/自定义）持久化 + 注入 `npm_config_registry` 全链路生效
 - [x] 预装插件机制：`AUTO_INSTALL_PLUGINS`（`adhdgofly-dsh-ext@0.1.1` 已发布 npm 并解开，启动自动预装）
@@ -24,20 +25,22 @@
 
 ---
 
-## P0 · 多标签页阶段 2：原生 webview（解决网页白屏）
+## P0 · 多标签页阶段 2：原生 webview（✅ 已完成）
 
-现状：阶段 1 用 iframe 池，Google / Bing / GitHub 等多数网站被 X-Frame-Options / CSP 拒嵌（白屏），只能浏览允许嵌入的站点。
+> 状态：✅ 2026-08-14 实现。诊断结论：白屏**不是 app 网络问题**（插件中心可正常拉取外部 API），而是主流站点以 `X-Frame-Options: SAMEORIGIN/deny` / CSP `frame-ancestors` 拒嵌 iframe（实测 npmjs `SAMEORIGIN`、GitHub `deny`、Google `SAMEORIGIN`；Bing 与 awesome-dsh-plugin 无限制可嵌）。
 
-目标：**DSH 标签保持 iframe（稳定、不丢会话）；用户自开的网页标签升级为 Tauri 原生子 webview**（`window.add_child(WebviewBuilder)`，官方 multiwebview 示例）。
+实现要点（`src-tauri/src/main.rs` + `src/tabs.ts`）：
 
-| 子任务 | 说明 |
+| 子任务 | 实现 |
 |--------|------|
-| 多 webview 管理器 | 封装「每标签一个原生 webview」的创建/销毁/显隐/定位，替代 iframe 池 |
-| 已知坑处理 | 多 webview 白屏 [#10011](https://github.com/tauri-apps/tauri/issues/10011)、resize 失效 [#10131](https://github.com/tauri-apps/tauri/issues/10131)、Windows 层级 [#9798](https://github.com/tauri-apps/tauri/issues/9798)、额外 webview 权限需单独配 [#10317](https://github.com/tauri-apps/tauri/issues/10317) |
-| 导航拦截 | `window.open` / 新窗口请求 → 自动开新标签；`webview.navigate` 同步网址栏 |
-| 回退 | webview 方案遇阻时，阶段 1 iframe 池继续可用（代码保留） |
+| 多 webview 管理器 | Rust `WebviewRegistry`（label=标签 id）+ 9 个命令：`webview_create/show/hide/set_bounds/navigate/back/forward/reload/close`；前端 IPC 串行队列 + 激活时「隐藏其余、显示当前」 |
+| 已知坑处理 | `add_child` 需 `tauri unstable` feature 且在 **async 命令**内调用（避免主线程死锁）；`webview_show` 末尾重设尺寸 kick，规避 macOS 白屏 [#10011](https://github.com/tauri-apps/tauri/issues/10011)；窗口 resize → 前端去抖重算 bounds；子 webview 不注入 IPC 权限（纯浏览）[#10317](https://github.com/tauri-apps/tauri/issues/10317) |
+| 导航拦截 | `on_new_window` → `Deny` + 事件 → 前端自动开新标签；`on_navigation` 事件同步网址栏/历史栈；`on_document_title_changed` 更新标签标题 |
+| 回退 | DSH 标签保持 iframe 不受影响；webview 创建失败时降级为空白页（控制台报错） |
 
-验收：Google / Bing / GitHub 等网站可在标签内正常浏览与搜索，网址栏可编辑前往。
+验收：Google / Bing / GitHub / npm 等网站可在标签内正常浏览与搜索，网址栏可编辑前往，`window.open` 自动开新标签。
+
+> ⚠️ 已知边界：原生 webview 定位使用逻辑坐标（macOS 1:1）；Windows 高分屏缩放下 CSS px 与逻辑坐标可能不一致（当前仅 macOS 目标）。
 
 ---
 
@@ -101,8 +104,7 @@
 
 ## 排期建议（下一个迭代）
 
-1. **P0 · 多标签阶段 2（原生 webview）**——网页白屏是当前最大体验短板，优先
-2. **P0 · 插件中心收尾**——详情页 + 自动更新检查 + 缓存落盘
-3. **P1 · 嵌入式终端面板**——xterm.js + stdin 转发
-4. **P1 · 工作区 / 权限模式 UI**——Codex/WorkBuddy 差异化参考点
-5. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 Node
+1. **P0 · 插件中心收尾**——详情页 + 自动更新检查 + 缓存落盘（多标签阶段 2 已完成）
+2. **P1 · 嵌入式终端面板**——xterm.js + stdin 转发
+3. **P1 · 工作区 / 权限模式 UI**——Codex/WorkBuddy 差异化参考点
+4. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 Node
