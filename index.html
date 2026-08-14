@@ -21,7 +21,7 @@
       display: flex;
     }
 
-    /* ===== 左侧边栏 ===== */
+    /* ===== 左侧边栏 — 可折叠窄条 ===== */
     #sidebar {
       width: 210px;
       flex: 0 0 210px;
@@ -29,18 +29,36 @@
       border-right: 1px solid #1e293b;
       display: flex;
       flex-direction: column;
-      padding: 18px 14px;
+      padding: 18px 10px;
       user-select: none;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                  flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                  padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      position: relative;
+      z-index: 1;
     }
+    /* 折叠状态：宽度 60px，只显示图标 */
+    #sidebar.collapsed {
+      width: 60px;
+      flex: 0 0 60px;
+      padding: 18px 6px;
+    }
+
     .brand {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 4px 8px 18px;
+      padding: 8px 12px 18px;
       border-bottom: 1px solid #1e293b;
       margin-bottom: 14px;
+      flex-shrink: 0;
+      cursor: pointer;
+      border-radius: 10px;
+      transition: background 0.2s;
+      user-select: none;
     }
-    .brand .logo { font-size: 1.7rem; }
+    .brand:hover { background: #1e293b; }
     .brand .name {
       font-size: 1.05rem;
       font-weight: 700;
@@ -48,9 +66,34 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       line-height: 1.2;
+      white-space: nowrap;
     }
-    .brand .ver { font-size: 0.68rem; color: #64748b; }
-    nav { display: flex; flex-direction: column; gap: 6px; }
+    .brand .name-short {
+      display: none;
+      font-size: 1.15rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: 0.5px;
+      line-height: 1.2;
+    }
+    /* 折叠时品牌居中，名称切换为 OH */
+    #sidebar.collapsed .brand {
+      justify-content: center;
+      gap: 0;
+      padding: 8px 6px 16px;
+      margin-bottom: 10px;
+    }
+    #sidebar.collapsed .brand .name { display: none; }
+    #sidebar.collapsed .brand .name-short { display: block; }
+
+    nav {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
     .nav-btn {
       display: flex;
       align-items: center;
@@ -59,13 +102,15 @@
       background: transparent;
       border: 1px solid transparent;
       color: #94a3b8;
-      padding: 10px 14px;
+      padding: 10px 12px;
       border-radius: 12px;
       font-size: 0.92rem;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.15s;
       text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
     }
     .nav-btn:hover { background: #1e293b; color: #e2e8f0; }
     .nav-btn.active {
@@ -74,6 +119,29 @@
       color: #fff;
       box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.6);
     }
+    .nav-btn .icon {
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+    .nav-btn .label {
+      opacity: 1;
+      transition: opacity 0.2s;
+    }
+    /* 折叠时隐藏文字标签 */
+    #sidebar.collapsed .nav-btn .label {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
+    #sidebar.collapsed .nav-btn {
+      padding: 10px 0;
+      justify-content: center;
+      gap: 0; /* 消除零宽 label + gap 造成的图标偏左 */
+    }
+    #sidebar.collapsed .nav-btn .icon {
+      font-size: 1.5rem;
+    }
+
     .sidebar-foot {
       margin-top: auto;
       padding: 12px 8px 2px;
@@ -83,8 +151,26 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      flex-shrink: 0;
+      transition: padding 0.3s;
     }
-    .dsh-status { display: flex; align-items: center; gap: 8px; color: #94a3b8; }
+    #sidebar.collapsed .sidebar-foot {
+      padding: 12px 4px 2px;
+      align-items: center;
+    }
+    .dsh-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    #sidebar.collapsed .dsh-status span:not(.dot) {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
     .dot {
       width: 10px;
       height: 10px;
@@ -102,12 +188,14 @@
       100% { opacity: 0.4; transform: scale(0.9); }
     }
 
-    /* ===== 内容区 ===== */
+    /* ===== 内容区 — 自动占满剩余宽度 ===== */
     #content {
       flex: 1;
       min-width: 0;
       position: relative;
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
+
     .view {
       display: none;
       position: absolute;
@@ -609,20 +697,29 @@
   </style>
 </head>
 <body>
-  <!-- 左侧边栏 -->
+  <!-- 左侧边栏（可折叠窄条） -->
   <aside id="sidebar">
-    <div class="brand">
-      <span class="logo">🧠</span>
-      <div>
-        <div class="name">OpenHarness</div>
-        <div class="ver">DeepSeek Harness 桌面版 · v0.3</div>
-      </div>
+    <div class="brand" id="brand-toggle" role="button" title="折叠/展开侧边栏 (⌘B)">
+      <span class="name">OpenHarness</span>
+      <span class="name-short">OH</span>
     </div>
     <nav>
-      <button class="nav-btn active" data-view="chat">💬 对话</button>
-      <button class="nav-btn" data-view="logs">🖥️ 日志</button>
-      <button class="nav-btn" data-view="plugins">🧩 插件</button>
-      <button class="nav-btn" data-view="settings">⚙️ 设置</button>
+      <button class="nav-btn active" data-view="chat">
+        <span class="icon">💬</span>
+        <span class="label">对话</span>
+      </button>
+      <button class="nav-btn" data-view="logs">
+        <span class="icon">🖥️</span>
+        <span class="label">日志</span>
+      </button>
+      <button class="nav-btn" data-view="plugins">
+        <span class="icon">🧩</span>
+        <span class="label">插件</span>
+      </button>
+      <button class="nav-btn" data-view="settings">
+        <span class="icon">⚙️</span>
+        <span class="label">设置</span>
+      </button>
     </nav>
     <div class="sidebar-foot">
       <div class="dsh-status">
@@ -753,7 +850,7 @@
     </section>
   </main>
 
-  <!-- Node.js 环境准备向导（系统无 Node 或版本过旧时弹出） -->
+  <!-- Node.js 环境准备向导 -->
   <div id="node-wizard">
     <div class="node-card">
       <div class="node-title">

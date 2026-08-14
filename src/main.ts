@@ -40,7 +40,6 @@ function switchView(name: string): void {
   document.querySelectorAll<HTMLElement>(".view").forEach((v) => {
     v.classList.toggle("active", v.id === "view-" + name);
   });
-  // 原生 webview 只应出现在对话视图：离开时隐藏，回来时恢复
   if (tabManager) {
     if (name === "chat") tabManager.restoreActiveWebview();
     else tabManager.hideAllWebviews();
@@ -59,7 +58,6 @@ async function launch(): Promise<void> {
 }
 
 // ===== Node.js 环境准备向导 =====
-// 系统无 Node（或版本 < 22.15 / 无 npx）时弹出；下载安装成功后自动继续启动 DSH
 let nodeWizardBound = false;
 
 function showNodeWizard(initialMsg: string): void {
@@ -136,7 +134,6 @@ function showNodeWizard(initialMsg: string): void {
 }
 
 async function boot(): Promise<void> {
-  // 前端错误兜底：任何 JS 异常都写进日志视图，避免「静默卡死」
   window.addEventListener("error", (e) => {
     appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
   });
@@ -147,9 +144,9 @@ async function boot(): Promise<void> {
   await initDsh();
   onLog(appendLog);
 
-  // ===== 多标签页（对话视图） =====
+  // ===== 多标签页 =====
   tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
-  void tabManager.initEvents(); // 注册原生 webview 事件（导航/新窗口/标题）
+  void tabManager.initEvents();
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));
   $("url-home").addEventListener("click", () => tabManager.addTab("blank"));
@@ -163,7 +160,6 @@ async function boot(): Promise<void> {
   $("url-fwd").addEventListener("click", () => tabManager.goForward());
   $("url-reload").addEventListener("click", () => tabManager.reload());
 
-  // 窗口尺寸变化 → 重算网页标签的原生 webview 位置（150ms 去抖）
   let resizeTimer: number | undefined;
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
@@ -203,12 +199,11 @@ async function boot(): Promise<void> {
   onReady((url) => {
     setStatus("running", "✅ DSH 运行中");
     appendLog("✅ DSH 就绪: " + url);
-    tabManager.markDshReady(); // 首次加载 / 重启后自动重连
+    tabManager.markDshReady();
     switchView("chat");
   });
   onExit(() => {
     appendLog("⚠️ DSH 进程已退出");
-    // 若外部有 DSH（如用户手动启动）在 3080，探测到后自动直连，避免卡死在等待页
     setTimeout(async () => {
       try {
         await fetch("http://127.0.0.1:3080/", { mode: "no-cors" });
@@ -222,9 +217,32 @@ async function boot(): Promise<void> {
     }, 1500);
   });
 
-  // ===== 启动：先检查 Node 环境 =====
-  // 系统 Node（>=22 + npx）或内置 Node 可用 → 直接启动；
-  // 否则弹出 Node 安装向导，安装成功后自动继续（node-ready → launch）
+  // ===== 侧边栏折叠/展开（窄条模式）：点击品牌 OpenHarness / OH 切换 =====
+  const sidebar = document.getElementById("sidebar");
+  const toggleBtn = document.getElementById("brand-toggle");
+  if (sidebar && toggleBtn) {
+    const toggleSidebar = () => {
+      sidebar.classList.toggle("collapsed");
+      // 通知 tabManager 刷新 iframe 尺寸（延迟等待过渡完成）
+      setTimeout(() => {
+        if (tabManager) {
+          tabManager.refreshActiveWebviewBounds();
+        }
+      }, 50);
+    };
+
+    toggleBtn.addEventListener("click", toggleSidebar);
+
+    // 键盘快捷键：Cmd+B (Mac) / Ctrl+B (Win/Linux)
+    document.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    });
+  }
+
+  // ===== 启动：检查 Node 环境 =====
   await initNodeEvents();
   const node = await checkNode();
   if (!node.ok) {

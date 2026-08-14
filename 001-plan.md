@@ -1,14 +1,14 @@
 # 001 · 规划：OpenHarness（下一步做什么）
 
-> 参考：`demo1/plan.html`（两阶段蓝图）、[`001-summary.md`](001-summary.md)（现状）、[`002-discussion.md`](002-discussion.md)（决策记录）
+> 参考：`demo1/plan.html`（两阶段蓝图）、`demo1/plan1.html`（双轨架构）、`demo1/task-plan.html`（视觉与语音规划）、[`001-summary.md`](001-summary.md)（现状）、[`002-discussion.md`](002-discussion.md)（决策记录）
 > 优先级：P0=下个迭代就做，P1=随后，P2=远期
-> 更新日期：2026-08-14
+> 更新日期：2026-08-14（已并入 demo1/task-plan 多模态路线）
 
 ---
 
 ## ▶ 接下来该做什么（一句话版）
 
-**P0 已全部完成（多标签阶段 2 原生 webview + 插件发布联动 + Node 环境准备）；接下来：① P0 插件中心收尾（详情页 + 自动更新检查 + 缓存落盘）② 然后进 P1（终端面板 → 工作区/权限模式），最后 P2 打包发布。** 详细排期见文末。
+**P0 已全部完成（多标签阶段 2 原生 webview + 插件发布联动 + Node 环境准备）；接下来建议：① P0 插件中心收尾（命令语义验证 → 缓存落盘 → 自动更新检查 → 详情页）② P1 嵌入式终端面板 ③ P1 工作区/权限模式 UI 与 P1/P2 多模态（系统 TTS + Vosk STT 先行）④ P2 打包发布。多模态路线已并入本文档（见「P1/P2 · 多模态能力」），执行另等具体要求。** 详细排期见文末。
 
 ---
 
@@ -95,6 +95,31 @@
 
 ---
 
+## P1/P2 · 多模态能力：视觉与语音（demo1/task-plan 建议 · 已评估采纳）
+
+> 来源：`demo1/task-plan.html`（视觉与语音完整规划：TTS / STT / 识图 / 生图）+ `demo1/plan1.html`（「DSH Cordis 插件 × Tauri 原生」双轨架构）。
+> 评估结论：**总体合理，采纳为能力路线图**；执行另排期，不抢占 P0/P1 主线。
+
+**架构原则（两层，来自 plan1.html）**：
+- 第 1 层 Tauri 原生能力：`system_tts` / `microphone_input` / `screen_capture` / `camera_access` / `image_process`，经 IPC 命令暴露。
+- 第 2 层 DSH Cordis 插件：`@dsh/plugin-tts` / `@dsh/plugin-speech` / `@dsh/plugin-vision` / `@dsh/plugin-draw` / `@dsh/plugin-ocr`，封装为 Agent 工具。
+- ⚠️ 前置依赖：当前插件生态里没有该桥接，先以「Tauri 命令 + 前端薄封装」落地，插件层后续补——否则「用户一句话 → Agent 工具」闭环不成立。
+
+**分期任务（合并 task-plan 四阶段）**：
+
+| 阶段 | 内容 | 要点 |
+|------|------|------|
+| P1 · 快速上线 | 系统 TTS + Vosk STT | 系统 TTS 零依赖快赢（macOS `NSSpeechSynthesizer` via `objc`）；⚠️ macOS WebKit 不支持 `SpeechRecognition` API，STT 必须走后端方案 |
+| P1 · 开源模型 | Qwen3-TTS 本地版 / Kokoro（82M 超轻）；SenseVoice-Small（50+ 语言、首字 <100ms）/ FireRedASR（中文 SOTA）；Tesseract OCR | 权重复用现有 Node 下载缓存机制（进度条 + 断点续传） |
+| P2 · 云端 API | Edge TTS（免费）/ Qwen3-TTS API / MiniMax；Azure / 阿里云 STT；视觉理解（GPT-4V / Qwen-VL）+ 通义万相 / DALL-E | 密钥存 Tauri 安全存储（keyring），不落明文 |
+| P2 · 高级本地 | dots.tts / MOSS-TTS；SenseVoice-Large / FireRedASR-LLM；Stable Diffusion / ComfyUI 子进程管理 | 推理任务一律 `tokio::task::spawn_blocking` 防阻塞 UI |
+
+**采纳/修正说明**：
+- ✅ 合理：系统 TTS 先上（零依赖）；Vosk 做入门 STT；Edge TTS 免费高质量；SenseVoice / FireRedASR / Qwen3-TTS 选型与「中文为主 + 本地优先」匹配；「复用 Node 下载缓存、安全存储、spawn_blocking」三条实现原则直接适用。
+- ⚠️ 修正：原清单把 TTS/STT 当独立功能，缺与 DSH Agent 的桥接层（见架构原则）；OCR 优先级低于多模态 LLM 视觉理解（后者可直接进 Agent 上下文）；6–8 周估时偏乐观，按能力路线图推进、不承诺排期。
+
+---
+
 ## P2 · 打包发布
 
 - `npm run tauri build` 产出 .app / .dmg。
@@ -106,7 +131,8 @@
 
 ## 排期建议（下一个迭代）
 
-1. **P0 · 插件中心收尾**——详情页 + 自动更新检查 + 缓存落盘（多标签阶段 2、Node 环境准备已完成）
-2. **P1 · 嵌入式终端面板**——xterm.js + stdin 转发
+1. **P0 · 插件中心收尾**——建议顺序：命令语义验证（最便宜、先排雷）→ 缓存落盘（版本基线 Rust 侧 JSON，自动更新检查的数据基础）→ 自动更新检查 → 插件详情页（多标签阶段 2、Node 环境准备已完成）
+2. **P1 · 嵌入式终端面板**——xterm.js + stdin 转发（终端是后续「命令输入/调试」的地基）
 3. **P1 · 工作区 / 权限模式 UI**——Codex/WorkBuddy 差异化参考点
-4. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 dsh 离线包（Node 安装器已就绪）
+4. **P1/P2 · 多模态能力**——系统 TTS + Vosk STT 先行（路线已并入上文，执行另等具体要求）
+5. **P2 · 打包发布**——签名 / 自动更新 / 内嵌 dsh 离线包（Node 安装器已就绪；发布工程与功能开发可并行）
