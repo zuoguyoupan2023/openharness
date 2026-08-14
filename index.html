@@ -481,23 +481,110 @@
 
     /* ===== 日志视图 ===== */
     #view-logs { padding: 20px 24px; gap: 14px; overflow: hidden; }
-    #log-area {
+
+    /* ===== 日志 / 终端视图：多终端标签栏 + 栈 ===== */
+    .logs-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+    .term-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+    }
+    .term-tabs::-webkit-scrollbar { height: 4px; }
+    .term-tabs::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+    .term-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 9px;
       background: var(--panel);
-      border-radius: 16px;
-      padding: 18px 22px;
+      border: 1px solid var(--border-soft);
+      color: var(--text-dim);
+      font-size: 0.82rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .term-tab:hover { background: var(--hover); color: var(--text); }
+    .term-tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 500;
+    }
+    .term-tab-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-size: 0.9rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      opacity: 0.7;
+    }
+    .term-tab-close:hover { background: rgba(0,0,0,0.2); opacity: 1; }
+    .term-tab.killed { text-decoration: line-through; opacity: 0.6; }
+    .term-add {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .term-add:hover { background: var(--hover); color: var(--text); }
+    .logs-clear {
+      margin-left: auto;
+      background: transparent;
+      border: 1px solid var(--border-soft);
+      color: var(--text-faint);
+      font-size: 0.8rem;
+      padding: 5px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .logs-clear:hover { background: var(--hover); color: var(--text); }
+
+    /* 终端窗格栈：同一时刻只显示激活的那个 */
+    .term-stack {
       flex: 1;
       min-height: 0;
-      overflow-y: auto;
-      font-family: 'JetBrains Mono', 'Fira Code', monospace;
-      font-size: 0.82rem;
-      line-height: 1.75;
-      color: var(--text-bright);
-      border: 1px solid var(--border-soft);
-      white-space: pre-wrap;
-      word-break: break-all;
+      position: relative;
     }
-    #log-area::-webkit-scrollbar { width: 6px; }
-    #log-area::-webkit-scrollbar-thumb { background: var(--text-faint); border-radius: 10px; }
+    .term-pane {
+      position: absolute;
+      inset: 0;
+      display: none;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      padding: 10px 12px;
+      overflow: hidden;
+    }
+    .term-pane.active { display: block; }
+    .term-pane .xterm { height: 100%; }
+    .term-pane .xterm .xterm-viewport { height: 100%; }
     .status-bar {
       display: flex;
       align-items: center;
@@ -997,6 +1084,9 @@
         <span id="side-status" data-i18n="sidebar.status.starting">DSH 启动中…</span>
       </div>
       <div class="foot-actions">
+        <button class="foot-btn" id="referral-toggle" data-i18n-title="referral.title">
+          <i data-icon="star"></i>
+        </button>
         <button class="foot-btn" id="theme-toggle" data-i18n-title="theme.toggle">
           <i data-icon="moon"></i>
         </button>
@@ -1036,9 +1126,20 @@
       <div id="iframe-stack"></div>
     </section>
 
-    <!-- 日志 -->
+    <!-- 日志 / 终端 -->
     <section id="view-logs" class="view">
-      <div id="log-area"></div>
+      <div class="logs-toolbar">
+        <div class="term-tabs" id="term-tabs">
+          <div class="term-tab active" data-tabb id="tab-dsh-log" data-i18n-title="term.log.tab">
+            <span class="term-tab-name" data-i18n="term.log.tab">DSH 日志</span>
+          </div>
+        </div>
+        <button class="term-add" id="term-add" data-i18n-title="term.add" aria-label="新增终端">
+          <i data-icon="plus"></i>
+        </button>
+        <button class="logs-clear" id="logs-clear" data-i18n-title="term.clearLog">清空</button>
+      </div>
+      <div class="term-stack" id="term-stack"></div>
       <div class="status-bar">
         <span class="dot waiting" id="indicator"></span>
         <span id="status-text" data-i18n="status.starting">启动中，等待服务就绪…</span>

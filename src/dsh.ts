@@ -36,6 +36,12 @@ export async function initDsh(): Promise<void> {
   await listen<string>("dsh-log", (e) => logListeners.forEach((f) => f(e.payload)));
   await listen<string>("dsh-ready", (e) => readyListeners.forEach((f) => f(e.payload)));
   await listen<void>("dsh-exit", () => exitListeners.forEach((f) => f()));
+  await listen<TermOutput>("term-output", (e) =>
+    termOutputListeners.forEach((f) => f(e.payload))
+  );
+  await listen<TermOutput>("term-exit", (e) =>
+    termExitListeners.forEach((f) => f(e.payload))
+  );
 }
 
 export async function startDsh(): Promise<string> {
@@ -48,6 +54,42 @@ export async function restartDsh(): Promise<string> {
 
 export async function runDshCmd(args: string[]): Promise<string> {
   return invoke<string>("run_dsh_cmd", { args });
+}
+
+/** 嵌入式终端：向 DSH 子进程 stdin 写入片段（终端输入 → 子进程）。
+ * 返回空串表示当前没有可写的子进程（外部实例 / 未启动）。 */
+export async function writeStdin(chunk: string): Promise<string> {
+  return invoke<string>("write_stdin", { chunk });
+}
+
+// ===== 多 shell 终端 =====
+
+/** 新建一个独立 shell 终端（spawn 本机默认 shell）。id 需全局唯一。 */
+export function termSpawn(id: string): Promise<string> {
+  return invoke<string>("term_spawn", { id });
+}
+/** 向某个 shell 终端写入输入片段 */
+export function termWrite(id: string, data: string): Promise<void> {
+  return invoke<void>("term_write", { id, data });
+}
+/** 关闭某个 shell 终端 */
+export function termKill(id: string): Promise<void> {
+  return invoke<void>("term_kill", { id });
+}
+
+export interface TermOutput {
+  id: string;
+  data: string;
+}
+type TermOutputListener = (payload: TermOutput) => void;
+type TermExitListener = (payload: TermOutput) => void;
+const termOutputListeners: TermOutputListener[] = [];
+const termExitListeners: TermExitListener[] = [];
+export function onTermOutput(fn: TermOutputListener): void {
+  termOutputListeners.push(fn);
+}
+export function onTermExit(fn: TermExitListener): void {
+  termExitListeners.push(fn);
 }
 
 export async function listInstalled(): Promise<InstalledPlugins> {

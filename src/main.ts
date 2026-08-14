@@ -1,8 +1,20 @@
 // src/main.ts —— OpenHarness 应用入口
-import { initDsh, onLog, onReady, onExit, startDsh } from "./dsh";
+import {
+  initDsh,
+  onLog,
+  onReady,
+  onExit,
+  startDsh,
+  termSpawn,
+  termWrite,
+  termKill,
+  onTermOutput,
+  onTermExit,
+} from "./dsh";
 import { TabManager } from "./tabs";
 import { initPlugins } from "./plugins";
 import { initSettings } from "./settings";
+import { TermManager } from "./terminal";
 import {
   checkNode,
   downloadNode,
@@ -23,10 +35,15 @@ function $(id: string): HTMLElement {
 /** 模块级引用：switchView 切换视图时联动原生 webview 显隐 */
 let tabManager: TabManager;
 
+/** 模块级引用：多终端管理器（DSH 日志只读终端 + 可交互 shell 终端） */
+let terms: TermManager | null = null;
+
+/** DSH 日志终端 id（固定只读终端） */
+const LOG_TERM_ID = "dsh-log";
+
 function appendLog(msg: string): void {
-  const logArea = $("log-area");
-  logArea.textContent += msg + "\n";
-  logArea.scrollTop = logArea.scrollHeight;
+  // DSH 进程输出统一灌进「DSH 日志」只读终端（终端内渲染，支持 ANSI）
+  terms?.feedLine(LOG_TERM_ID, msg);
 }
 
 function setStatus(state: string, text: string): void {
@@ -47,6 +64,8 @@ function switchView(name: string): void {
     if (name === "chat") tabManager.restoreActiveWebview();
     else tabManager.hideAllWebviews();
   }
+  // 切换到日志/终端视图时重算各 xterm 尺寸
+  if (name === "logs") terms?.fit();
 }
 
 async function launch(): Promise<void> {
@@ -58,6 +77,75 @@ async function launch(): Promise<void> {
     appendLog(t("app.startErr") + String(e));
     setStatus("error", t("status.error"));
   }
+}
+
+// ===== 多终端（DSH 日志只读终端 + 可交互 shell 终端）=====
+function initTerminalPanel(): void {
+  terms = new TermManager($("term-stack"), $("term-tabs"), {
+    // shell 终端输入 → 转发到对应 shell 子进程 stdin
+    onShellInput(id, data) {
+      void termWrite(id, data).catch(() => {
+        terms?.markExited(
+          id,
+          "\x1b[31m（写入 shell stdin 失败）\x1b[0m"
+        );
+      });
+    },
+    // 关闭按钮 → 杀掉子进程并移除 UI
+    onCloseShell(id) {
+      void termKill(id).catch(() => {});
+      terms?.closeShell(id);
+    },
+  });
+
+  // 默认固定一个 DSH 日志只读终端
+  terms.ensureLog(LOG_TERM_ID, t("term.log.tab"));
+  // 兜底初始提示（若 DSH 尚未开始输出，让日志终端不至于空白）
+  terms.feedLine(LOG_TERM_ID, t("logs.initial1"));
+  terms.feedLine(LOG_TERM_ID, t("logs.initial2"));
+
+  // shell 进程输出事件 → 灌回对应终端
+  onTermOutput(({ id, data }) => {
+    // 忽略 DSH 日志终端的 shell 事件（日志走 dsh-log），只处理 shell 终端 id
+    if (id !== LOG_TERM_ID) terms?.feed(id, data);
+  });
+  // shell 进程退出事件 → 标记终端为已退出
+  onTermExit(({ id, data }) => {
+    if (id !== LOG_TERM_ID) {
+      terms?.markExited(id, t("term.exited", { code: data }));
+    }
+  });
+
+  // 「+」新增 shell 终端
+  $("term-add").addEventListener("click", async () => {
+    const id = terms?.nextShellId() ?? `shell-${Date.now()}`;
+    terms?.newShell(id, t("term.shell.tab", { n: id.slice(id.indexOf("-") + 1) }));
+    try {
+      appendLog(await termSpawn(id));
+    } catch (e) {
+      // spawn 失败：在终端里提示并关闭该标签
+      terms?.feed(id, t("term.spawnFail", { err: String(e) }) + "\r\n");
+      terms?.markExited(id, "");
+      terms?.closeShell(id);
+      appendLog(t("term.spawnFail", { err: String(e) }));
+    }
+  });
+
+  // 清空：清空当前激活的终端（含 DSH 日志）
+  $("logs-clear").addEventListener("click", () => {
+    const act = terms?.getActive();
+    if (act) terms?.clear(act);
+  });
+}
+
+// ===== 推荐链接（侧边栏底部角落，低调）=====
+const REFERRAL_URL = "https://opencode.ai/go?ref=3Y4AMWZX88";
+function initReferral(): void {
+  const btn = document.getElementById("referral-toggle");
+  btn?.addEventListener("click", () => {
+    // 主窗口 webview 未拦截 window.open：_blank 将在系统默认浏览器打开，避免占用应用内标签
+    window.open(REFERRAL_URL, "_blank", "noopener");
+  });
 }
 
 // ===== Node.js 环境准备向导 =====
@@ -141,7 +229,6 @@ async function boot(): Promise<void> {
   mountIcons();
   initLang();
   initTheme();
-  $("log-area").textContent = t("logs.initial1") + "\n" + t("logs.initial2");
 
   window.addEventListener("error", (e) => {
     appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
@@ -172,7 +259,10 @@ async function boot(): Promise<void> {
   let resizeTimer: number | undefined;
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
-    resizeTimer = window.setTimeout(() => tabManager.refreshActiveWebviewBounds(), 150);
+    resizeTimer = window.setTimeout(() => {
+      tabManager.refreshActiveWebviewBounds();
+      terms?.fit();
+    }, 150);
   });
 
   // ===== 视图切换 =====
@@ -182,6 +272,8 @@ async function boot(): Promise<void> {
 
   // ===== 日志视图 =====
   $("retry-btn").addEventListener("click", launch);
+  initTerminalPanel();
+  initReferral();
 
   // ===== 插件中心 =====
   initPlugins({
@@ -237,6 +329,7 @@ async function boot(): Promise<void> {
         if (tabManager) {
           tabManager.refreshActiveWebviewBounds();
         }
+        terms?.fit();
       }, 50);
     };
 

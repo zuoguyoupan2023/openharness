@@ -25,6 +25,20 @@ const AUTO_INSTALL_PLUGINS: &[&str] = &["adhdgofly-dsh-ext", "openharness-reader
 /// 记录 DSH 子进程 pid，应用退出时连同进程组一起回收
 struct DshPid(Mutex<Option<u32>>);
 
+/// DSH 子进程 stdin 句柄，供前端「嵌入式终端面板」写入（终端输入 → 子进程 stdin）
+/// 用 tokio::sync::Mutex：write_stdin 需要在持有锁的同时跨 await 写 stdin
+/// （std MutexGuard 非 Send，无法满足 Tauri async 命令的 Send 约束）。
+struct DshStdin(tokio::sync::Mutex<Option<tokio::process::ChildStdin>>);
+
+/// 一个独立的 shell 终端（用户通过「+」新增，跑本机默认 shell）。
+/// stdin 供 term_write 写入；child 所有权交给专门的 wait 任务，线程退出后清理。
+struct ShellEntry {
+    stdin: tokio::sync::Mutex<tokio::process::ChildStdin>,
+    pid: u32,
+}
+/// 全部 shell 终端注册表（key = 终端 id，全 app 唯一）
+struct Shells(tokio::sync::Mutex<std::collections::HashMap<String, ShellEntry>>);
+
 /// 每次启动使用独立的日志文件，避免上一次的日志尾部读取任务互相干扰
 static LOG_SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -837,6 +851,8 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
     cmd.stdout(Stdio::from(log_file)).stderr(Stdio::from(log_file2));
+    // stdin 改为 piped：嵌入式终端面板通过 write_stdin 写入子进程 stdin
+    cmd.stdin(Stdio::piped());
     #[cfg(unix)]
     {
         // 独立进程组，应用退出时整组回收（npx -> node 两级进程）
@@ -849,11 +865,15 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         *app.state::<DshPid>().0.lock().unwrap() = Some(pid);
     }
 
+    // 暂存 stdin 句柄，供 write_stdin 命令写入（Child 不 drop，句柄保持打开）
+    *app.state::<DshStdin>().0.lock().await = child.stdin.take();
+
     // 监听子进程退出
     let app_clone = app.clone();
     tokio::spawn(async move {
         let _ = child.wait().await;
         *app_clone.state::<DshPid>().0.lock().unwrap() = None;
+        let _ = app_clone.state::<DshStdin>().0.lock().await.take();
         let _ = app_clone.emit("dsh-exit", ());
     });
 
@@ -895,6 +915,197 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     });
 
     Ok(())
+}
+
+/// 嵌入式终端面板：向前端写入 DSH 子进程 stdin（chunk 可多次分批，保持字节序）。
+/// 返回实际发给子进程的原始字符串；无活动进程时返回空串。
+#[tauri::command]
+async fn write_stdin(app: AppHandle, chunk: String) -> Result<String, String> {
+    let state = app.state::<DshStdin>();
+    let mut guard = state.0.lock().await;
+    let Some(mut stdin) = guard.take() else {
+        return Ok(String::new());
+    };
+    let bytes: Vec<u8> = chunk.into_bytes();
+    use tokio::io::AsyncWriteExt;
+    if let Err(e) = stdin.write_all(&bytes).await {
+        return Err(format!("❌ 写入 stdin 失败: {}", e));
+    }
+    // 显式 flush，确保字节立刻送达子进程
+    if let Err(e) = stdin.flush().await {
+        return Err(format!("❌ 刷新 stdin 失败: {}", e));
+    }
+    *guard = Some(stdin);
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+// ============================ 多终端（shell 终端 + 只读 DSH 日志终端） ============================
+
+/// 新建一个独立的 shell 终端：spawn 本机默认 shell，stdout/stderr 经 term-output 事件推给前端，
+/// 输入经 term_write 写入其 stdin；退出时发 term-exit 并摘除。
+#[tauri::command]
+async fn term_spawn(app: AppHandle, id: String) -> Result<String, String> {
+    // 同 id 已存在则先清理（幂等）
+    kill_shell(&app, &id).await;
+
+    let shell = if cfg!(windows) {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+    } else {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+    };
+
+    let mut cmd = Command::new(&shell);
+    if cfg!(windows) {
+        cmd.arg("/Q");
+    } else {
+        // 登录 shell，加载用户环境（PATH/别名）
+        cmd.arg("-l");
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("❌ 启动 shell 失败 ({}): {}", shell, e))?;
+    let pid = child.id().unwrap_or(0);
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "❌ 无法获取 shell stdin".to_string())?;
+    let mut stdout = BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| "❌ 无法获取 shell stdout".to_string())?,
+    );
+    let mut stderr = BufReader::new(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| "❌ 无法获取 shell stderr".to_string())?,
+    );
+
+    // stdout 读取任务
+    let id_out = id.clone();
+    let app_out = app.clone();
+    tokio::spawn(async move {
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match stdout.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let _ = app_out.emit(
+                        "term-output",
+                        &ShellData { id: id_out.clone(), data: String::from_utf8_lossy(&buf).to_string() },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // stderr 读取任务
+    let id_err = id.clone();
+    let app_err = app.clone();
+    tokio::spawn(async move {
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match stderr.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let _ = app_err.emit(
+                        "term-output",
+                        &ShellData { id: id_err.clone(), data: String::from_utf8_lossy(&buf).to_string() },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // 注册 stdin / pid（缺省，child 所有权交给 wait 任务）
+    {
+        let state = app.state::<Shells>();
+        let mut all = state.0.lock().await;
+        all.insert(
+            id.clone(),
+            ShellEntry { stdin: tokio::sync::Mutex::new(stdin), pid },
+        );
+    }
+
+    // 退出监听：这个任务独占 child，wait 结束后发 term-exit 并摘除注册表
+    let app_wait = app.clone();
+    let id_wait = id.clone();
+    tokio::spawn(async move {
+        let code = child
+            .wait()
+            .await
+            .ok()
+            .and_then(|s| s.code())
+            .unwrap_or(-1);
+        let _ = app_wait.emit(
+            "term-exit",
+            &ShellData { id: id_wait.clone(), data: code.to_string() },
+        );
+        kill_shell(&app_wait, &id_wait).await;
+    });
+
+    Ok(format!("✅ 终端 {} 已启动 ({})", id, shell))
+}
+
+/// 向指定 shell 终端的 stdin 写入片段（终端输入 → shell）
+#[tauri::command]
+async fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String> {
+    let state = app.state::<Shells>();
+    let all = state.0.lock().await;
+    let Some(entry) = all.get(&id) else {
+        return Err(format!("终端 {} 不存在", id));
+    };
+    let mut stdin = entry.stdin.lock().await;
+    stdin
+        .write_all(data.as_bytes())
+        .await
+        .map_err(|e| format!("❌ 写入 shell stdin 失败: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("❌ 刷新 shell stdin 失败: {}", e))?;
+    Ok(())
+}
+
+/// 关闭某个 shell 终端
+#[tauri::command]
+async fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
+    kill_shell(&app, &id).await;
+    Ok(())
+}
+
+/// 帮助函数：杀掉并摘除某个 shell 终端的子进程（通过 pid 发 SIGKILL）
+async fn kill_shell(app: &AppHandle, id: &str) {
+    let pid = {
+        let state = app.state::<Shells>();
+        let mut all = state.0.lock().await;
+        all.remove(id).map(|e| e.pid)
+    };
+    if let Some(pid) = pid {
+        #[cfg(unix)]
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ShellData {
+    id: String,
+    data: String,
 }
 
 // ============================ 多 webview（网页标签 · 阶段 2） ============================
@@ -1255,15 +1466,37 @@ fn list_installed_plugins() -> Result<serde_json::Value, String> {
     }))
 }
 
+/// 应用退出/重启时：强制回收所有 shell 终端子进程（blocking_lock 用于非 async 的 run 闭包）
+fn kill_all_shells(app: &AppHandle) {
+    let state = app.state::<Shells>();
+    let pids: Vec<u32> = state.0.blocking_lock().values().map(|e| e.pid).collect();
+    for pid in pids {
+        #[cfg(unix)]
+        unsafe {
+            let _ = libc::kill(pid as i32, libc::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(DshPid(Mutex::new(None)))
+        .manage(DshStdin(tokio::sync::Mutex::new(None)))
+        .manage(Shells(tokio::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(WebviewRegistry(Mutex::new(HashMap::new())))
         .manage(NodeBusy(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,
             run_dsh_cmd,
+            write_stdin,
+            term_spawn,
+            term_write,
+            term_kill,
             list_installed_plugins,
             get_plugin_cache,
             set_plugin_cache,
@@ -1287,6 +1520,7 @@ fn main() {
         .run(|app_handle, event| match event {
             // 应用退出时回收 DSH（遵循 close_with_app 设置，默认随 app 关闭），避免残留占用 3080
             RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+                kill_all_shells(app_handle);
                 kill_dsh_on_exit(app_handle);
             }
             _ => {}

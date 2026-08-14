@@ -61,6 +61,26 @@ const DICT: Record<string, Entry> = {
     en: "First run downloads dependencies. If the network is slow, switch to the npmmirror registry in Settings.",
   },
   "logs.retry": { zh: "重新启动", en: "Restart" },
+  "term.log.tab": { zh: "DSH 日志", en: "DSH Log" },
+  "term.add": { zh: "新增终端", en: "New terminal" },
+  "term.close": { zh: "关闭终端", en: "Close terminal" },
+  "term.shell.tab": { zh: "终端 {n}", en: "Terminal {n}" },
+  "term.clearLog": { zh: "清空", en: "Clear" },
+  "term.spawnFail": {
+    zh: "❌ 启动 shell 终端失败：{err}",
+    en: "❌ Failed to start shell terminal: {err}",
+  },
+  "term.spawned": { zh: "shell 终端已启动", en: "Shell terminal started" },
+  "term.exited": {
+    zh: "（进程已退出，代码 {code}）",
+    en: "(process exited, code {code})",
+  },
+
+  // ===== 推荐链接（侧边栏底部角落，低调不打扰）=====
+  "referral.title": {
+    zh: "邀请好友：彼此各得 $5 使用额度",
+    en: "Invite friends: you each get $5 credit",
+  },
 
   // ===== 插件中心 =====
   "plugins.title": { zh: "插件中心", en: "Plugin Center" },
