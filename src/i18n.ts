@@ -214,11 +214,12 @@ const DICT: Record<string, Entry> = {
   // ===== 插件索引源（006 双数据源后台刷新取源） =====
   "settings.pluginIndex.title": { zh: "插件索引源", en: "Plugin index source" },
   "settings.pluginIndex.desc": {
-    zh: "插件中心后台刷新 registry 的取源。默认自动（jsdelivr CDN → GitHub raw 并发取最新者，规避 jsdelivr 缓存滞后）；jsdelivr 国内更快，GitHub raw 更新最及时；自建镜像填完整 URL。",
-    en: "Where the plugin center fetches the registry for background refresh. Auto = jsdelivr CDN → GitHub raw, newest wins (avoids jsdelivr CDN lag); jsdelivr is faster in China, raw is freshest; custom = your mirror URL.",
+    zh: "插件中心后台刷新 registry 的取源。默认自动（gitee 镜像 → jsdelivr CDN → GitHub raw 并发取最新者，规避 jsdelivr 缓存滞后）；gitee 国内最快但需自建镜像仓库并同步，jsdelivr 国内较快、零维护，GitHub raw 更新最及时；自建镜像填完整 URL。",
+    en: "Where the plugin center fetches the registry for background refresh. Auto = gitee mirror → jsdelivr CDN → GitHub raw, newest wins (avoids jsdelivr CDN lag); gitee is fastest in China but needs a self-hosted mirror with sync, jsdelivr is faster in China & zero-maintenance, raw is freshest; custom = your mirror URL.",
   },
-  "settings.pluginIndex.auto": { zh: "自动（jsdelivr → GitHub raw，取最新）", en: "Auto (jsdelivr → GitHub raw, newest wins)" },
-  "settings.pluginIndex.jsdelivr": { zh: "jsdelivr CDN（国内快）", en: "jsdelivr CDN (faster in China)" },
+  "settings.pluginIndex.auto": { zh: "自动（gitee → jsdelivr → GitHub raw，取最新）", en: "Auto (gitee → jsdelivr → GitHub raw, newest wins)" },
+  "settings.pluginIndex.gitee": { zh: "gitee 镜像（国内最快，需自建镜像并同步）：", en: "gitee mirror (fastest in China, self-host & sync):" },
+  "settings.pluginIndex.jsdelivr": { zh: "jsdelivr CDN（国内快，零维护）", en: "jsdelivr CDN (faster in China, zero-maintenance)" },
   "settings.pluginIndex.raw": { zh: "GitHub raw（最新，国内可能慢）", en: "GitHub raw (freshest, may be slow in China)" },
   "settings.pluginIndex.optCustom": { zh: "自定义镜像：", en: "Custom mirror:" },
   "settings.pluginIndex.note": {

@@ -3,7 +3,7 @@ import { restartDsh } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
-import { getIndexSourcePref, getIndexSourceCustom, setIndexSourcePref, type IndexSource } from "./plugin-sources";
+import { getIndexSourcePref, getIndexSourceCustom, setIndexSourcePref, getIndexSourceGitee, setIndexSourceGitee, getDefaultGiteeUrl, type IndexSource } from "./plugin-sources";
 
 export function initSettings(): void {
   const radios = document.getElementsByName("registry") as NodeListOf<HTMLInputElement>;
@@ -110,6 +110,7 @@ export function initSettings(): void {
   // ===== 插件索引源（006 双数据源后台刷新取源） =====
   const idxRadios = document.getElementsByName("plugin-index-source") as NodeListOf<HTMLInputElement>;
   const idxCustom = document.getElementById("plugin-index-source-custom") as HTMLInputElement | null;
+  const idxGitee = document.getElementById("plugin-index-source-gitee") as HTMLInputElement | null;
   const syncIdxRadios = (): void => {
     const pref = getIndexSourcePref();
     idxRadios.forEach((r) => {
@@ -117,6 +118,7 @@ export function initSettings(): void {
       else r.checked = r.value === pref;
     });
     if (idxCustom && pref === "custom") idxCustom.value = getIndexSourceCustom();
+    if (idxGitee) idxGitee.value = pref === "gitee" ? getIndexSourceGitee() || getDefaultGiteeUrl() : "";
   };
   syncIdxRadios();
   idxRadios.forEach((r) => {
@@ -124,6 +126,12 @@ export function initSettings(): void {
       if (!r.checked) return;
       if (r.value === "__custom") {
         setIndexSourcePref("custom", (idxCustom?.value || "").trim());
+      } else if (r.value === "gitee") {
+        // 选中 gitee：若未填 URL 则采用默认地址（与 GitHub 仓库同 owner/repo 名）
+        const url = (idxGitee?.value || "").trim() || getDefaultGiteeUrl();
+        setIndexSourcePref("gitee");
+        setIndexSourceGitee(url);
+        if (idxGitee) idxGitee.value = url;
       } else {
         setIndexSourcePref(r.value as IndexSource);
       }
@@ -132,6 +140,13 @@ export function initSettings(): void {
   if (idxCustom) {
     idxCustom.addEventListener("change", () => {
       if (getIndexSourcePref() === "custom") setIndexSourcePref("custom", idxCustom.value.trim());
+    });
+  }
+  if (idxGitee) {
+    idxGitee.addEventListener("change", () => {
+      // 与「自定义」一致：仅当前源为 gitee 时持久化其 URL；其它源下编辑不自动启用 gitee。
+      // 选中 gitee 后存入的 URL（默认或自填）会一并前置进入 auto 候选链。
+      if (getIndexSourcePref() === "gitee") setIndexSourceGitee(idxGitee.value.trim());
     });
   }
 

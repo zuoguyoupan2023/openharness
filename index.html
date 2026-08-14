@@ -1056,16 +1056,6 @@
         <span data-i18n="plugins.title">插件中心</span>
         <span class="badge" data-i18n="plugins.titleBadge">安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成</span>
       </div>
-      <div class="plugins-actions">
-        <button id="plugins-refresh" class="btn-icon">
-          <i data-icon="refresh-cw"></i>
-          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
-        </button>
-        <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
-      </div>
-      <div id="plugin-source-tabs" class="source-tabs"></div>
-      <div id="plugin-cats" class="plugin-cats"></div>
-
       <div class="section-title">
         <span class="ticon"><i data-icon="circle-check"></i></span>
         <span data-i18n="plugins.installedTitle">已安装（web profile）</span>
@@ -1085,6 +1075,15 @@
         <span data-i18n="plugins.communityTitle">插件市场（精选 + GitHub Topic）</span>
         <span class="badge" id="plugin-count">-</span>
       </div>
+      <div class="plugins-actions">
+        <button id="plugins-refresh" class="btn-icon">
+          <i data-icon="refresh-cw"></i>
+          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+        </button>
+        <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
+      </div>
+      <div id="plugin-source-tabs" class="source-tabs"></div>
+      <div id="plugin-cats" class="plugin-cats"></div>
       <div id="plugin-loading" class="plugin-loading"></div>
       <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
       <table class="plugin-table" id="plugin-table" style="display:none;">
@@ -1172,10 +1171,13 @@
           <span data-i18n="settings.pluginIndex.title">插件索引源</span>
         </div>
         <div class="setting-desc" data-i18n="settings.pluginIndex.desc">
-          插件中心后台刷新 registry 的取源。默认自动（jsdelivr CDN → GitHub raw 并发取最新者，规避 jsdelivr 缓存滞后）；jsdelivr 国内更快，GitHub raw 更新最及时；自建镜像填完整 URL。
+          插件中心后台刷新 registry 的取源。默认自动（gitee 镜像 → jsdelivr CDN → GitHub raw 并发取最新者，规避 jsdelivr 缓存滞后）；gitee 国内最快但需自建镜像并同步，jsdelivr 国内较快零维护，GitHub raw 更新最及时；自建镜像填完整 URL。
         </div>
-        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="auto" /><span data-i18n="settings.pluginIndex.auto">自动（jsdelivr → GitHub raw，取最新）</span></label>
-        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="jsdelivr" /><span data-i18n="settings.pluginIndex.jsdelivr">jsdelivr CDN（国内快）</span></label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="auto" /><span data-i18n="settings.pluginIndex.auto">自动（gitee → jsdelivr → GitHub raw，取最新）</span></label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="gitee" /><span data-i18n="settings.pluginIndex.gitee">gitee 镜像（国内最快，需自建镜像并同步）：</span>
+          <input id="plugin-index-source-gitee" placeholder="https://gitee.com/<user>/openharness/raw/main/plugins.registry.json" spellcheck="false" />
+        </label>
+        <label class="setting-radio"><input type="radio" name="plugin-index-source" value="jsdelivr" /><span data-i18n="settings.pluginIndex.jsdelivr">jsdelivr CDN（国内快，零维护）</span></label>
         <label class="setting-radio"><input type="radio" name="plugin-index-source" value="raw" /><span data-i18n="settings.pluginIndex.raw">GitHub raw（最新，国内可能慢）</span></label>
         <label class="setting-radio"><input type="radio" name="plugin-index-source" value="__custom" /><span data-i18n="settings.pluginIndex.optCustom">自定义镜像：</span>
           <input id="plugin-index-source-custom" placeholder="https://your-mirror/plugins.registry.json" spellcheck="false" />

@@ -1,0 +1,62 @@
+# .github/workflows/sync-registry-to-gitee.yml
+# 006 计划 M5 · 「插件索引源」gitee 镜像的定时同步（国内加速取源，规避 jsdelivr 缓存滞后）。
+#
+# 将本仓库 main 分支推送到 gitee 镜像仓库，使插件中心「gitee / 自动」取源可从
+# gitee raw（极快）直接拉到最新 plugins.registry.json。
+#
+# 前置（在 GitHub 仓库 Settings 配置一次）：
+#   · Secrets → 新建 `GITEE_SYNC_TOKEN`：gitee 个人访问令牌（需 repo 写权限；
+#     gitee.com → 设置 → 私人令牌，勾选 projects + pull_requests + userinfo）。
+#   · [可选] Variables → `GITEE_USERNAME`：gitee 用户名（默认同 GitHub owner）。
+#   · [可选] Variables → `GITEE_REPO`：gitee 镜像仓库名（默认 openharness）。
+#   · gitee 侧预先手动创建一个空仓库（同名即可），首次推送即建立同步。
+#
+# 未配置 GITEE_SYNC_TOKEN 时本工作流 no-op（不报错），不影响其它 CI。
+# 由 push（plugins.registry.json 变更）与每日定时触发两条链路，确保 gitee 镜像不落后。
+
+name: Sync registry to gitee
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - plugins.registry.json
+      - .github/workflows/sync-registry-to-gitee.yml
+  schedule:
+    # 每日 04:00 UTC（北京时间 12:00）全量同步一次（cron 不受 paths 过滤）
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: gitee-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mirror main → gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_SYNC_TOKEN }}
+          GITEE_USERNAME: ${{ vars.GITEE_USERNAME }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::notice::未配置 GITEE_SYNC_TOKEN，跳过 gitee 同步（非阻塞）。配置后下次触发即生效。"
+            exit 0
+          fi
+          : "${GITEE_USERNAME:=${{ github.repository_owner }}}"
+          : "${GITEE_REPO:=openharness}"
+          echo "Mirror → gitee.com/${GITEE_USERNAME}/${GITEE_REPO} (refs/heads/main)"
+          git config user.name "gitee-sync-bot" 2>/dev/null || true
+          git remote remove gitee 2>/dev/null || true
+          # token 嵌入 URL；GitHub 对已注册 secret 自动遮蔽日志，不泄露。
+          git remote add gitee "https://${GITEE_USERNAME}:${GITEE_TOKEN}@gitee.com/${GITEE_USERNAME}/${GITEE_REPO}.git"
+          git push --quiet --force gitee HEAD:main
+          git remote remove gitee 2>/dev/null || true
+          echo "::notice::✅ 已同步 main 到 gitee 镜像仓库 gitee.com/${GITEE_USERNAME}/${GITEE_REPO}"

@@ -61,11 +61,15 @@ export interface RegistryDiff {
 // ============================ 常量 ============================
 
 /** 自维护 registry 分发地址（构建产物写于 repo 根 plugins.registry.json）。
- *  jsdelivr CDN（国内有节点、自动从 GitHub 同步）→ GitHub raw 兜底；两者并发拉取取 count 最新者，规避 jsdelivr 缓存滞后。 */
+ *  gitee 镜像（国内最快，需自建同步）→ jsdelivr CDN（国内有节点、自动从 GitHub 同步）→ GitHub raw 兜底；
+ *  并发拉取取 count 最新者，规避 jsdelivr 缓存滞后（gitee/jsdelivr→raw 实测 raw 最及时）。 */
 const REGISTRY_CDN_URLS = [
   "https://cdn.jsdelivr.net/gh/zuoguyoupan2023/openharness@main/plugins.registry.json",
   "https://raw.githubusercontent.com/zuoguyoupan2023/openharness/main/plugins.registry.json",
 ];
+/** gitee 镜像的默认地址（与 GitHub 仓库同 owner/repo 名；用户可在设置页改为自己的 gitee 镜像仓库）。
+ *  仅在用户显式选择 gitee / 已填写 gitee URL 时参与取源，避免未配置时多一次无效请求。 */
+const DEFAULT_GITEE_URL = "https://gitee.com/zuoguyoupan2023/openharness/raw/main/plugins.registry.json";
 const LATEST_TIMEOUT_MS = 12_000;
 
 /** awesome 11 分类顺序（标签来自快照 awesome.categories） */
@@ -78,16 +82,26 @@ export type SourceTab = "awesome" | "topic" | "all";
 
 // ============================ 索引源偏好（设置页「插件索引源」，localStorage，免新增 Rust 命令） ============================
 
-export type IndexSource = "auto" | "jsdelivr" | "raw" | "custom";
+/** 索引源：auto=全候选取最新；jsdelivr/raw=单源；gitee=自建 gitee 镜像（国内最快）；custom=任意镜像 URL */
+export type IndexSource = "auto" | "jsdelivr" | "raw" | "gitee" | "custom";
 const PREF_KEY = "oh-plugin-index-source";
 const CUSTOM_KEY = "oh-plugin-index-source-custom";
+const GITEE_KEY = "oh-plugin-index-source-gitee";
 
 export function getIndexSourcePref(): IndexSource {
   const v = (typeof localStorage !== "undefined" && localStorage.getItem(PREF_KEY)) || "";
-  return v === "jsdelivr" || v === "raw" || v === "custom" ? (v as IndexSource) : "auto";
+  return v === "jsdelivr" || v === "raw" || v === "gitee" || v === "custom" ? (v as IndexSource) : "auto";
 }
 export function getIndexSourceCustom(): string {
   return (typeof localStorage !== "undefined" && localStorage.getItem(CUSTOM_KEY)) || "";
+}
+/** gitee 镜像 URL（用户已配置则为该值；未配置返回空串——auto 链路仅在非空时纳入 gitee 候选） */
+export function getIndexSourceGitee(): string {
+  return (typeof localStorage !== "undefined" && localStorage.getItem(GITEE_KEY)) || "";
+}
+/** gitee 镜像的默认地址（设置页输入框 placeholder 用） */
+export function getDefaultGiteeUrl(): string {
+  return DEFAULT_GITEE_URL;
 }
 export function setIndexSourcePref(src: IndexSource, custom?: string): void {
   try {
@@ -97,17 +111,32 @@ export function setIndexSourcePref(src: IndexSource, custom?: string): void {
     /* ignore */
   }
 }
+/** 持久化 gitee 镜像 URL；传空串则清除（auto 链路随之不再纳入 gitee） */
+export function setIndexSourceGitee(url: string): void {
+  try {
+    if (url) localStorage.setItem(GITEE_KEY, url);
+    else localStorage.removeItem(GITEE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
-/** 按偏好解析本次刷新的候选 URL（自动=全候选取最新；单源=仅该源；自定义=该 URL） */
+/** 按偏好解析本次刷新的候选 URL：
+ *  - auto：jsdelivr + raw，若已配置 gitee 则前置 gitee（国内最快优先）；
+ *  - gitee：仅 gitee（未配置则回退 jsdelivr，避免直选 gitee 但未建镜像时报错）；
+ *  - jsdelivr / raw / custom：单源。 */
 function resolveRegistryUrls(): string[] {
   const pref = getIndexSourcePref();
   if (pref === "custom") {
     const cu = getIndexSourceCustom().trim();
     if (cu) return [cu];
   }
+  const giteeUrl = getIndexSourceGitee().trim();
+  if (pref === "gitee") return giteeUrl ? [giteeUrl] : REGISTRY_CDN_URLS;
   if (pref === "jsdelivr") return [REGISTRY_CDN_URLS[0]];
   if (pref === "raw") return [REGISTRY_CDN_URLS[1]];
-  return REGISTRY_CDN_URLS;
+  // auto：已配置 gitee 则前置（Promise.allSettled 并发取最新，gitee 不可达自动跳过）
+  return giteeUrl ? [giteeUrl, ...REGISTRY_CDN_URLS] : [...REGISTRY_CDN_URLS];
 }
 
 // ============================ 快照（秒开基线） ============================
