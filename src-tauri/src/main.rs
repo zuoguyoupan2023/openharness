@@ -19,8 +19,13 @@ const DSH_URL: &str = "http://127.0.0.1:3080";
 
 /// 预装插件清单：发布到 npm 后，取消注释对应元素即可自动预装。
 /// 逻辑已完整实现（幂等：已安装则跳过；先于 web 启动，串行避免 npx/pnpm 并发锁）。
-/// 三件套：adhdgofly-dsh-ext（POS 高亮）+ openharness-reader（文件阅读/编辑/MD 预览）。
-const AUTO_INSTALL_PLUGINS: &[&str] = &["adhdgofly-dsh-ext", "openharness-reader"];
+/// 四件套：adhdgofly-dsh-ext（POS 高亮）+ openharness-reader（文件阅读/编辑/MD 预览）
+///        + openharness-reply-in-cn（强制中文回复，@0.1.0 已发布 npm）。
+const AUTO_INSTALL_PLUGINS: &[&str] = &[
+    "adhdgofly-dsh-ext",
+    "openharness-reader",
+    "openharness-reply-in-cn",
+];
 
 /// 记录 DSH 子进程 pid，应用退出时连同进程组一起回收
 struct DshPid(Mutex<Option<u32>>);
@@ -750,10 +755,53 @@ fn read_web_profile() -> (serde_json::Value, Vec<String>) {
     (deps, bundles)
 }
 
-/// 插件是否已安装（依赖或 bundle 命中）
+/// 判断一个依赖值是「可解析」的：
+/// - npm semver / tag / git / url 等异地依赖 → 可解析（由 pnpm/dsh 安装）
+/// - `link:`/`file:` 指向的本地目录若**存在** → 可解析
+/// - `link:`/`file:` 指向的本地目录若**不存在** → 坏的残留（软链悬空），不可解析
+///   例：早期手动 `link:/.../DSH-tauri-app/openharness-reply-in-cn`，而目录已挪走。
+///   这种残留会让 dsh 启动时 `cannot resolve profile bundle ...` 崩溃，必须重装。
+fn dep_resolvable(dep_val: &str) -> bool {
+    for prefix in ["link:", "file:"] {
+        if let Some(rest) = dep_val.strip_prefix(prefix) {
+            // 相对路径从 profile 目录解析
+            let p = if Path::new(rest).is_absolute() {
+                PathBuf::from(rest)
+            } else {
+                web_profile_dir().join(rest)
+            };
+            // 指向仓内不存在的目录 = 悬空残留
+            return p.exists();
+        }
+    }
+    // 其余（semver / `npm:` / `git:` / `github:` / url 等）视为可解析
+    true
+}
+
+/// 插件是否已有效安装（依赖或 bundle 命中，且本地 link/file 残留非悬空）
 fn plugin_installed(pkg: &str) -> bool {
     let (deps, bundles) = read_web_profile();
-    deps.get(pkg).is_some() || bundles.iter().any(|b| b == pkg)
+    if bundles.iter().any(|b| b == pkg) {
+        return true;
+    }
+    match deps.get(pkg).and_then(|v| v.as_str()) {
+        Some(val) => dep_resolvable(val),
+        // 不在 deps 里（可能在 bundles、或根本没装）
+        None => bundles.iter().any(|b| b == pkg),
+    }
+}
+
+/// 该包在 profile 里是否残留着「悬空的 link/file 依赖」。
+/// 例：早期用 `link:/.../DSH-tauri-app/xxx` 开发安装、目录又挪走 → 软链悬空。
+/// 此时 `dsh plugin add <pkg>` 会被 lockfile 里已有的 link 声明「欺骗」——pnpm 只
+/// 重装该 link 而不是改写为 npm semver（日志：Installing a dependency from a non-existent
+/// directory，package.json 仍旧是 link:）。必须**先 remove 清掉该声明，再 add npm 版本**。
+fn plugin_dangles(pkg: &str) -> bool {
+    let (deps, _bundles) = read_web_profile();
+    match deps.get(pkg).and_then(|v| v.as_str()) {
+        Some(val) => !dep_resolvable(val),
+        None => false,
+    }
 }
 
 // ============================ 核心：DSH 进程托管 ============================
@@ -1358,6 +1406,19 @@ async fn start_dsh(app: AppHandle) -> Result<String, String> {
         if plugin_installed(pkg) {
             let _ = app.emit("dsh-log", format!("✅ 预装插件 {} 已存在，跳过", pkg));
             continue;
+        }
+        // 若残留着悬空 link/file（目录已不存在），`dsh plugin add` 会被 lockfile 里已有
+        // 的 link 声明欺骗、不改写为 npm semver。必须先 remove 清掉，再 add npm 版本。
+        if plugin_dangles(pkg) {
+            let _ = app.emit(
+                "dsh-log",
+                format!(
+                    "🧹 插件 {} 检测到失效的本地 link 残留，先移除再以 npm 重新安装...",
+                    pkg
+                ),
+            );
+            // remove 失败（如原本就是坏声明）不致命，忽略继续 add
+            let _ = run_dsh_cmd_inner(&app, &["plugin", "--profile", "web", "remove", pkg]).await;
         }
         let _ = app.emit("dsh-log", format!("📦 正在预装插件 {} ...", pkg));
         run_dsh_cmd_inner(&app, &["plugin", "--profile", "web", "add", pkg]).await?;
