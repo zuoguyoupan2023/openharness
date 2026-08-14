@@ -8,6 +8,8 @@ import {
   restartDsh,
   type InstalledPlugins,
 } from "./dsh";
+import { t, getLang } from "./i18n";
+import { iconSvg } from "./icons";
 
 interface AwesomePlugin {
   name: string;
@@ -23,11 +25,11 @@ interface CategoryMap {
   [key: string]: { en: string; zh: string };
 }
 
-const OFFICIAL_PKGS: Array<{ name: string; desc: string }> = [
-  { name: "@deepseek-ai/dsh-base", desc: "官方基础组合包（框架核心）" },
-  { name: "@deepseek-ai/dsh-web-app", desc: "官方 Web 应用组合包" },
-  { name: "@deepseek-ai/dsh-headless", desc: "官方 headless 组合包" },
-  { name: "@deepseek-ai/dsh-llm-deepseek", desc: "DeepSeek LLM 接入插件" },
+const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
+  { name: "@deepseek-ai/dsh-base", descKey: "plugins.official.base" },
+  { name: "@deepseek-ai/dsh-web-app", descKey: "plugins.official.web" },
+  { name: "@deepseek-ai/dsh-headless", descKey: "plugins.official.headless" },
+  { name: "@deepseek-ai/dsh-llm-deepseek", descKey: "plugins.official.llm" },
 ];
 
 const INDEX_URL = "https://awesome-dsh-plugin.com/plugins.json";
@@ -74,30 +76,31 @@ function pkgNameOf(spec: string): string {
 }
 
 async function fetchVersion(name: string): Promise<string> {
-  try {
-    const r = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`);
-    if (r.ok) {
-      const d = (await r.json()) as { version?: string };
-      if (d.version) return d.version;
+  const tryFetch = async (base: string): Promise<string | null> => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(`${base}/${encodeURIComponent(name)}/latest`, { signal: ctrl.signal });
+      if (r.ok) {
+        const d = (await r.json()) as { version?: string };
+        if (d.version) return d.version;
+      }
+    } catch {
+      // 国内网络可能失败，回退 npmmirror
+    } finally {
+      clearTimeout(timer);
     }
-  } catch {
-    // 国内网络可能失败，回退 npmmirror
-  }
-  try {
-    const r = await fetch(`https://registry.npmmirror.com/${encodeURIComponent(name)}/latest`);
-    if (r.ok) {
-      const d = (await r.json()) as { version?: string };
-      if (d.version) return d.version;
-    }
-  } catch {
-    // ignore
-  }
-  return "—";
+    return null;
+  };
+  const v = (await tryFetch("https://registry.npmjs.org")) ??
+    (await tryFetch("https://registry.npmmirror.com"));
+  return v ?? "—";
 }
 
 export function initPlugins(opts: PluginCenterOptions): void {
   const els = {
     refresh: $("plugins-refresh") as HTMLButtonElement,
+    refreshLabel: $("plugins-refresh-label") as HTMLSpanElement,
     search: $("plugins-search") as HTMLInputElement,
     cats: $("plugin-cats"),
     chips: $("installed-chips"),
@@ -129,7 +132,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const names = installedNames(installed);
     els.chips.innerHTML = "";
     if (!names.length) {
-      els.chips.textContent = "暂无已安装插件（profile 未初始化）";
+      els.chips.textContent = t("plugins.emptyInstalled");
       return;
     }
     names.forEach((n) => {
@@ -154,8 +157,9 @@ export function initPlugins(opts: PluginCenterOptions): void {
       });
       els.cats.appendChild(chip);
     };
-    mk("", "全部");
-    CATEGORY_ORDER.forEach((c) => mk(c, categories[c]?.zh ?? c));
+    mk("", t("plugins.allCat"));
+    const lang = getLang();
+    CATEGORY_ORDER.forEach((c) => mk(c, categories[c]?.[lang] ?? c));
   }
 
   function renderOfficial(): void {
@@ -164,16 +168,18 @@ export function initPlugins(opts: PluginCenterOptions): void {
       const card = document.createElement("div");
       card.className = "official-card";
       const btn = document.createElement("button");
+      btn.className = "btn-icon";
       if (isInstalled(p.name)) {
-        btn.textContent = "已安装";
+        btn.textContent = t("plugins.installedTag");
         btn.disabled = true;
       } else {
-        btn.textContent = "⬇ 安装";
+        btn.innerHTML = iconSvg("download");
+        btn.appendChild(document.createTextNode(t("plugins.install")));
         btn.addEventListener("click", () =>
-          performAction(`安装 ${p.name}`, ["plugin", "--profile", "web", "add", p.name])
+          performAction(`${t("plugins.install")} ${p.name}`, ["plugin", "--profile", "web", "add", p.name])
         );
       }
-      card.innerHTML = `<div class="official-name">${p.name}</div><div class="official-desc">${p.desc}</div>`;
+      card.innerHTML = `<div class="official-name">${p.name}</div><div class="official-desc">${t(p.descKey)}</div>`;
       card.appendChild(btn);
       els.official.appendChild(card);
     });
@@ -195,7 +201,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.tbody.innerHTML = "";
     els.table.style.display = rows.length ? "table" : "none";
     if (!rows.length) {
-      els.loading.textContent = "没有匹配的插件";
+      els.loading.textContent = t("plugins.noMatch");
       return;
     }
     rows.forEach((p) => {
@@ -207,35 +213,45 @@ export function initPlugins(opts: PluginCenterOptions): void {
       const prev = baseline[p.name];
       const updatable = installedFlag && npm && ver !== "—" && prev && compareVer(ver, prev) > 0;
 
+      const esc = (s: string): string =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+      // 非 npm 源（github: 等）没有 npm 版本号，版本列给个弱标签说明来源
+      let verHtml = esc(ver);
+      if (!npm && spec) {
+        const srcTag = spec.startsWith("github:") ? "github" : "git";
+        verHtml = `<span class="ver-src">${srcTag}</span>`;
+      }
+
       let tagHtml = "";
-      if (installedFlag) tagHtml = '<span class="tag installed">已安装</span>';
-      else if (npm && ver !== "—") tagHtml = '<span class="tag latest">最新</span>';
+      if (installedFlag) tagHtml = `<span class="tag installed">${t("plugins.installedTag")}</span>`;
+      else if (npm && ver !== "—") tagHtml = `<span class="tag latest">${t("plugins.latestTag")}</span>`;
+      if (updatable) tagHtml = `<span class="tag update">${t("plugins.updateTag")}</span>`;
 
       let actionsHtml = "";
       if (installedFlag) {
         actionsHtml =
           (npm
-            ? `<button class="install-btn" data-act="update" data-spec="${pkgNameOf(spec!)}">⬆ 更新</button> `
+            ? `<button class="install-btn btn-icon" data-act="update" data-spec="${esc(pkgNameOf(spec!))}">${iconSvg("upload")}${t("plugins.update")}</button> `
             : "") +
-          `<button class="install-btn" data-act="remove" data-name="${p.name}">🗑 卸载</button>`;
-        if (updatable) tagHtml = '<span class="tag update">🆕 可更新</span>';
+          `<button class="install-btn btn-icon" data-act="remove" data-name="${esc(p.name)}">${iconSvg("trash-2")}${t("plugins.remove")}</button>`;
       } else {
-        actionsHtml = `<button class="install-btn" data-act="install" data-spec="${spec ?? p.name}">⬇ 安装</button>`;
+        actionsHtml = `<button class="install-btn btn-icon" data-act="install" data-spec="${esc(spec ?? p.name)}">${iconSvg("download")}${t("plugins.install")}</button>`;
       }
 
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td class="pkg"><a href="${p.url}" target="_blank" rel="noopener">${p.name}</a></td>
-        <td class="ver">${ver}</td>
+        <td class="pkg"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a></td>
+        <td class="ver">${verHtml}</td>
         <td>${tagHtml}</td>
-        <td class="desc">${p.description?.zh ?? p.description?.en ?? "—"}</td>
+        <td class="desc">${esc(p.description?.zh ?? p.description?.en ?? "—")}</td>
         <td style="text-align:right;">${actionsHtml}</td>`;
       tr.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) => {
         b.addEventListener("click", () => {
           const act = b.dataset.act;
-          if (act === "install") performAction(`安装 ${b.dataset.spec}`, ["plugin", "--profile", "web", "add", b.dataset.spec!]);
-          else if (act === "update") performAction(`更新 ${b.dataset.spec}`, ["plugin", "--profile", "web", "update", b.dataset.spec!]);
-          else if (act === "remove") performAction(`卸载 ${b.dataset.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name!]);
+          if (act === "install") performAction(`${t("plugins.install")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "add", b.dataset.spec!]);
+          else if (act === "update") performAction(`${t("plugins.update")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "update", b.dataset.spec!]);
+          else if (act === "remove") performAction(`${t("plugins.remove")} ${b.dataset.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name!]);
         });
       });
       els.tbody.appendChild(tr);
@@ -246,24 +262,24 @@ export function initPlugins(opts: PluginCenterOptions): void {
     opts.onAction(`⏳ ${label} …`);
     try {
       await runDshCmd(args);
-      opts.onAction(`✅ ${label} 完成，正在重启 DSH 使插件生效…`);
+      opts.onAction(`✅ ${t("plugins.actDone", { label })}`);
       await restartDsh();
-      opts.onAction("🔄 DSH 已重启，插件已生效");
+      opts.onAction(t("plugins.actRestarted"));
     } catch (e) {
-      opts.onAction(`❌ ${label} 失败: ${e}`);
+      opts.onAction(`❌ ${t("plugins.actFail", { label })}${e}`);
     }
     await loadInstalled();
     renderOfficial();
     renderTable();
   }
 
-  /** 拉取 npm 版本（并发池，结果缓存到 localStorage） */
+  /** 拉取 npm 版本（并发池，结果缓存到 localStorage；失败的 "—" 不缓存，下次刷新重试） */
   async function refreshVersions(): Promise<void> {
     const tasks = plugins
       .map((p) => specOf(p))
       .filter((s): s is string => s !== null && isNpmSpec(s))
       .map(pkgNameOf)
-      .filter((n) => !versions[n]);
+      .filter((n) => !versions[n] || versions[n] === "—");
     const unique = [...new Set(tasks)];
     let i = 0;
     const pool = 5;
@@ -280,7 +296,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   function persistVersions(): void {
     try {
-      localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify(versions));
+      // 只缓存真实版本号，"—"（失败）不落盘，保证下次刷新会重试
+      const clean: Record<string, string> = {};
+      for (const [k, v] of Object.entries(versions)) {
+        if (v && v !== "—") clean[k] = v;
+      }
+      localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify(clean));
       // 更新基线：记录本次看到的最新版本，下次对比出「可更新」
       const baseline: Record<string, string> = {};
       plugins.forEach((p) => {
@@ -298,8 +319,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   async function refreshIndex(): Promise<void> {
     els.refresh.disabled = true;
-    els.refresh.textContent = "📡 获取中…";
-    els.loading.textContent = "⏳ 正在获取插件索引…";
+    els.refreshLabel.textContent = t("plugins.fetchingShort");
+    els.loading.textContent = t("plugins.fetching");
     try {
       const r = await fetch(INDEX_URL);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -313,18 +334,27 @@ export function initPlugins(opts: PluginCenterOptions): void {
       renderCategories();
       await refreshVersions();
     } catch (e) {
-      els.loading.textContent = "⚠️ 获取插件索引失败：" + String(e) + "（请检查网络）";
+      els.loading.textContent = t("plugins.fetchFail", { err: String(e) });
     }
     await loadInstalled();
     renderOfficial();
     renderTable();
     els.refresh.disabled = false;
-    els.refresh.textContent = "📡 刷新插件索引";
+    els.refreshLabel.textContent = t("plugins.refresh");
   }
 
   els.refresh.addEventListener("click", refreshIndex);
   els.search.addEventListener("input", () => {
     filterText = els.search.value;
+    renderTable();
+  });
+
+  // 语言切换后重渲染动态列表
+  window.addEventListener("lang-changed", () => {
+    els.refreshLabel.textContent = t("plugins.refresh");
+    void loadInstalled();
+    renderCategories();
+    renderOfficial();
     renderTable();
   });
 

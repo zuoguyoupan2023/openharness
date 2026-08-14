@@ -1,6 +1,7 @@
 // src/node.ts —— Node.js 环境检测与安装向导 API（与 Rust 后端通信）
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { t } from "./i18n";
 
 export interface NodeCheck {
   ok: boolean;
@@ -38,7 +39,7 @@ export async function checkNode(): Promise<NodeCheck> {
       systemNpx: false,
       bundled: null,
       bundledPath: null,
-      message: "❌ 无法检测 Node 环境: " + String(e),
+      message: t("node.checkFail") + String(e),
     };
   }
 }

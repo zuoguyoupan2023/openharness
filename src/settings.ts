@@ -1,6 +1,8 @@
-// src/settings.ts —— 设置视图（npm 镜像源、DSH 生命周期等）
+// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言）
 import { restartDsh } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
+import { t, setLang, getLang } from "./i18n";
+import { setThemePref, getThemePref, ThemePref } from "./theme";
 
 export function initSettings(): void {
   const radios = document.getElementsByName("registry") as NodeListOf<HTMLInputElement>;
@@ -31,14 +33,14 @@ export function initSettings(): void {
       break;
     }
     if (url !== "" && !/^https?:\/\//.test(url)) {
-      saved.textContent = "⚠️ 请输入以 http(s):// 开头的镜像地址";
+      saved.textContent = t("settings.registry.errUrl");
       return;
     }
     try {
       await setRegistry(url);
-      saved.textContent = "✓ 已保存（对之后的新下载生效；已运行的 DSH 重启后生效）";
+      saved.textContent = t("settings.registry.saved");
     } catch (e) {
-      saved.textContent = "⚠️ 保存失败：" + String(e);
+      saved.textContent = t("settings.registry.errSave") + String(e);
     }
     setTimeout(() => {
       saved.textContent = "";
@@ -50,10 +52,10 @@ export function initSettings(): void {
     try {
       await setCloseWithApp(closeWithApp.checked);
       lcSaved.textContent = closeWithApp.checked
-        ? "✓ 已保存：3080 将随 app 一起关闭"
-        : "✓ 已保存：3080 将不随 app 关闭（退出后 DSH 继续运行）";
+        ? t("settings.dsh.savedOn")
+        : t("settings.dsh.savedOff");
     } catch (e) {
-      lcSaved.textContent = "⚠️ 保存失败：" + String(e);
+      lcSaved.textContent = t("settings.registry.errSave") + String(e);
     }
     setTimeout(() => {
       lcSaved.textContent = "";
@@ -61,16 +63,49 @@ export function initSettings(): void {
   });
 
   restartBtn.addEventListener("click", async () => {
-    saved.textContent = "🔄 正在重启 DSH…";
+    saved.textContent = t("settings.dsh.restarting");
     try {
       // 重启后 dsh-ready 事件会触发标签页自动重连
       await restartDsh();
-      saved.textContent = "✓ DSH 已重启";
+      saved.textContent = t("settings.dsh.restarted");
     } catch (e) {
-      saved.textContent = "⚠️ 重启失败：" + String(e);
+      saved.textContent = t("settings.registry.errSave") + String(e);
     }
     setTimeout(() => {
       saved.textContent = "";
     }, 5000);
   });
+
+  // ===== 外观：跟随系统 / 亮色 / 暗色 =====
+  const themeRadios = document.getElementsByName("theme") as NodeListOf<HTMLInputElement>;
+  const syncThemeRadios = (): void => {
+    const pref = getThemePref();
+    themeRadios.forEach((r) => {
+      r.checked = r.value === pref;
+    });
+  };
+  syncThemeRadios();
+  themeRadios.forEach((r) => {
+    r.addEventListener("change", () => {
+      if (r.checked) setThemePref(r.value as ThemePref);
+    });
+  });
+
+  // ===== 语言：中文 / English =====
+  const langRadios = document.getElementsByName("lang") as NodeListOf<HTMLInputElement>;
+  const syncLangRadios = (): void => {
+    const l = getLang();
+    langRadios.forEach((r) => {
+      r.checked = r.value === l;
+    });
+  };
+  syncLangRadios();
+  langRadios.forEach((r) => {
+    r.addEventListener("change", () => {
+      if (r.checked) setLang(r.value === "zh" ? "zh" : "en");
+    });
+  });
+
+  // 语言变化后重新同步语言单选（设置页本身不重渲染，保持选中态）
+  window.addEventListener("lang-changed", syncLangRadios);
 }

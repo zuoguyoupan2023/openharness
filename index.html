@@ -5,6 +5,69 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OpenHarness</title>
   <style>
+    /* ===== 主题变量：:root 暗色（默认），[data-theme="light"] 亮色 ===== */
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #0f172a;
+      --card: #1e293b;
+      --card-2: #1e293b;
+      --border: #1e293b;
+      --border-strong: #334155;
+      --border-soft: #2d3748;
+      --hover: #1e293b;
+      --text: #e2e8f0;
+      --text-bright: #cbd5e1;
+      --text-dim: #94a3b8;
+      --text-faint: #64748b;
+      --link: #93c5fd;
+      --accent: #3b82f6;
+      --accent-strong: #1d4ed8;
+      --accent-border: #2563eb;
+      --accent-text: #fff;
+      --grad-1: #60a5fa;
+      --grad-2: #a78bfa;
+      --ok: #22c55e;
+      --warn: #facc15;
+      --danger: #ef4444;
+      --ok-soft: #14532d;
+      --ok-text: #4ade80;
+      --warn-soft: #7c2d12;
+      --warn-text: #fb923c;
+      --overlay: rgba(5, 10, 24, 0.88);
+      --shadow: rgba(0, 0, 0, 0.7);
+      --progress: linear-gradient(90deg, #3b82f6, #a78bfa);
+    }
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --panel: #ffffff;
+      --card: #f4f7fb;
+      --card-2: #eef2f7;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --border-soft: #d7dee8;
+      --hover: #eef2f7;
+      --text: #1e293b;
+      --text-bright: #334155;
+      --text-dim: #64748b;
+      --text-faint: #94a3b8;
+      --link: #1d4ed8;
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+      --accent-border: #2563eb;
+      --accent-text: #fff;
+      --ok: #16a34a;
+      --warn: #d97706;
+      --danger: #dc2626;
+      --ok-soft: #dcfce7;
+      --ok-text: #166534;
+      --warn-soft: #ffedd5;
+      --warn-text: #c2410c;
+      --overlay: rgba(241, 245, 249, 0.9);
+      --shadow: rgba(15, 23, 42, 0.25);
+      --progress: linear-gradient(90deg, #2563eb, #7c3aed);
+    }
     * {
       margin: 0;
       padding: 0;
@@ -15,18 +78,37 @@
       overflow: hidden;
     }
     body {
-      background: #0b1120;
+      background: var(--bg);
       font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #e2e8f0;
+      color: var(--text);
       display: flex;
+      transition: background 0.25s, color 0.25s;
+    }
+
+    /* ===== 图标（lucide 内联 SVG，禁用 emoji 约定） ===== */
+    [data-icon] {
+      display: inline-block;
+      width: 1em;
+      height: 1em;
+      flex-shrink: 0;
+      line-height: 0;
+    }
+    [data-icon] svg {
+      display: block;
+    }
+    .btn-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: center;
     }
 
     /* ===== 左侧边栏 — 可折叠窄条 ===== */
     #sidebar {
       width: 210px;
       flex: 0 0 210px;
-      background: #0f172a;
-      border-right: 1px solid #1e293b;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       padding: 18px 10px;
@@ -50,7 +132,7 @@
       align-items: center;
       gap: 10px;
       padding: 8px 12px 18px;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 14px;
       flex-shrink: 0;
       cursor: pointer;
@@ -58,25 +140,21 @@
       transition: background 0.2s;
       user-select: none;
     }
-    .brand:hover { background: #1e293b; }
-    .brand .name {
-      font-size: 1.05rem;
-      font-weight: 700;
-      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    .brand:hover { background: var(--hover); }
+    .brand .name,
+    .brand .name-short {
+      background: linear-gradient(135deg, var(--grad-1), var(--grad-2));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       line-height: 1.2;
       white-space: nowrap;
     }
+    .brand .name { font-size: 1.05rem; font-weight: 700; }
     .brand .name-short {
       display: none;
       font-size: 1.15rem;
       font-weight: 800;
-      background: linear-gradient(135deg, #60a5fa, #a78bfa);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
       letter-spacing: 0.5px;
-      line-height: 1.2;
     }
     /* 折叠时品牌居中，名称切换为 OH */
     #sidebar.collapsed .brand {
@@ -101,7 +179,7 @@
       width: 100%;
       background: transparent;
       border: 1px solid transparent;
-      color: #94a3b8;
+      color: var(--text-dim);
       padding: 10px 12px;
       border-radius: 12px;
       font-size: 0.92rem;
@@ -112,15 +190,16 @@
       white-space: nowrap;
       overflow: hidden;
     }
-    .nav-btn:hover { background: #1e293b; color: #e2e8f0; }
+    .nav-btn:hover { background: var(--hover); color: var(--text); }
     .nav-btn.active {
-      background: #1d4ed8;
-      border-color: #2563eb;
-      color: #fff;
+      background: var(--accent-strong);
+      border-color: var(--accent-border);
+      color: var(--accent-text);
       box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.6);
     }
     .nav-btn .icon {
-      font-size: 1.2rem;
+      font-size: 1.05rem;
+      display: inline-flex;
       flex-shrink: 0;
     }
     .nav-btn .label {
@@ -139,15 +218,15 @@
       gap: 0; /* 消除零宽 label + gap 造成的图标偏左 */
     }
     #sidebar.collapsed .nav-btn .icon {
-      font-size: 1.5rem;
+      font-size: 1.3rem;
     }
 
     .sidebar-foot {
       margin-top: auto;
       padding: 12px 8px 2px;
-      border-top: 1px solid #1e293b;
+      border-top: 1px solid var(--border);
       font-size: 0.8rem;
-      color: #64748b;
+      color: var(--text-faint);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -162,7 +241,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      color: #94a3b8;
+      color: var(--text-dim);
       white-space: nowrap;
       overflow: hidden;
     }
@@ -175,18 +254,44 @@
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #64748b;
+      background: var(--text-faint);
       display: inline-block;
       flex: 0 0 10px;
     }
-    .dot.waiting { background: #facc15; animation: pulse 1.5s infinite; }
-    .dot.running { background: #22c55e; }
-    .dot.error { background: #ef4444; }
+    .dot.waiting { background: var(--warn); animation: pulse 1.5s infinite; }
+    .dot.running { background: var(--ok); }
+    .dot.error { background: var(--danger); }
     @keyframes pulse {
       0% { opacity: 0.4; transform: scale(0.9); }
       50% { opacity: 1; transform: scale(1.15); }
       100% { opacity: 0.4; transform: scale(0.9); }
     }
+
+    /* 侧边栏底部快捷操作（主题 / 语言） */
+    .foot-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #sidebar.collapsed .foot-actions { flex-direction: column; }
+    .foot-btn {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text-dim);
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .foot-btn:hover { background: var(--hover); color: var(--text); }
+    #sidebar.collapsed .foot-btn { width: 36px; height: 30px; flex: 0 0 auto; padding: 0; }
+    .foot-btn [data-icon] { font-size: 1rem; }
 
     /* ===== 内容区 — 自动占满剩余宽度 ===== */
     #content {
@@ -210,13 +315,13 @@
       align-items: center;
       gap: 4px;
       padding: 6px 10px;
-      background: #0f172a;
-      border-bottom: 1px solid #1e293b;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
       flex: 0 0 auto;
       overflow-x: auto;
     }
     #tabbar::-webkit-scrollbar { height: 4px; }
-    #tabbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    #tabbar::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
     #tab-list { display: flex; gap: 4px; flex: 1; min-width: 0; }
     .tab {
       display: flex;
@@ -225,15 +330,15 @@
       padding: 6px 12px;
       border-radius: 8px;
       font-size: 0.82rem;
-      color: #94a3b8;
+      color: var(--text-dim);
       cursor: pointer;
       max-width: 190px;
       white-space: nowrap;
       border: 1px solid transparent;
       user-select: none;
     }
-    .tab:hover { background: #1e293b; color: #e2e8f0; }
-    .tab.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+    .tab:hover { background: var(--hover); color: var(--text); }
+    .tab.active { background: var(--accent-strong); border-color: var(--accent-border); color: var(--accent-text); }
     .tab-title { overflow: hidden; text-overflow: ellipsis; }
     .tab-x {
       background: none;
@@ -245,67 +350,76 @@
       padding: 0 2px;
       opacity: 0.7;
       flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .tab-x:hover { opacity: 1; }
     #tab-new {
       flex: 0 0 auto;
       width: 28px;
       height: 28px;
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text-bright);
       border-radius: 8px;
-      font-size: 1rem;
+      font-size: 0.85rem;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
-    #tab-new:hover { background: #334155; }
+    #tab-new:hover { background: var(--hover); border-color: var(--text-faint); }
 
     #urlbar {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      background: #0f172a;
-      border-bottom: 1px solid #1e293b;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
       flex: 0 0 auto;
     }
     .url-btn {
       flex: 0 0 auto;
       width: 30px;
       height: 30px;
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text-bright);
       border-radius: 8px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
-    .url-btn:hover { background: #334155; }
+    .url-btn:hover { background: var(--hover); border-color: var(--text-faint); }
     #url-input {
       flex: 1;
       min-width: 0;
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
       border-radius: 8px;
-      color: #e2e8f0;
+      color: var(--text);
       padding: 7px 14px;
       font-size: 0.86rem;
       font-family: 'JetBrains Mono', 'Fira Code', monospace;
       outline: none;
     }
-    #url-input:focus { border-color: #2563eb; }
+    #url-input:focus { border-color: var(--accent-border); }
     .url-go {
       flex: 0 0 auto;
-      background: #1d4ed8;
+      background: var(--accent-strong);
       border: none;
-      color: #fff;
+      color: var(--accent-text);
       padding: 7px 18px;
       border-radius: 8px;
       cursor: pointer;
       font-size: 0.85rem;
       font-weight: 500;
     }
-    .url-go:hover { background: #2563eb; }
+    .url-go:hover { background: var(--accent); }
 
     #iframe-stack { flex: 1; min-height: 0; position: relative; }
     .tab-pane { position: absolute; inset: 0; display: none; flex-direction: column; }
@@ -318,39 +432,39 @@
       align-items: center;
       justify-content: center;
       gap: 12px;
-      background: #0b1120;
-      color: #64748b;
+      background: var(--bg);
+      color: var(--text-faint);
       font-size: 0.95rem;
     }
     .spinner {
       width: 42px;
       height: 42px;
       border-radius: 50%;
-      border: 4px solid #1e293b;
-      border-top-color: #3b82f6;
+      border: 4px solid var(--card-2);
+      border-top-color: var(--accent);
       animation: spin 0.9s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .newtab { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 30px; }
     .newtab-title { font-size: 1.6rem; font-weight: 700; }
-    .newtab-sub { font-size: 0.9rem; color: #64748b; }
+    .newtab-sub { font-size: 0.9rem; color: var(--text-faint); }
     .quick-links { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 680px; }
     .quick-link {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      color: var(--text-bright);
       padding: 10px 18px;
       border-radius: 12px;
       cursor: pointer;
       font-size: 0.9rem;
       transition: all 0.15s;
     }
-    .quick-link:hover { background: #334155; border-color: #475569; transform: translateY(-1px); }
+    .quick-link:hover { background: var(--hover); border-color: var(--text-faint); transform: translateY(-1px); }
 
     /* ===== 日志视图 ===== */
     #view-logs { padding: 20px 24px; gap: 14px; overflow: hidden; }
     #log-area {
-      background: #0f172a;
+      background: var(--panel);
       border-radius: 16px;
       padding: 18px 22px;
       flex: 1;
@@ -359,25 +473,25 @@
       font-family: 'JetBrains Mono', 'Fira Code', monospace;
       font-size: 0.82rem;
       line-height: 1.75;
-      color: #cbd5e1;
-      border: 1px solid #2d3748;
+      color: var(--text-bright);
+      border: 1px solid var(--border-soft);
       white-space: pre-wrap;
       word-break: break-all;
     }
     #log-area::-webkit-scrollbar { width: 6px; }
-    #log-area::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+    #log-area::-webkit-scrollbar-thumb { background: var(--text-faint); border-radius: 10px; }
     .status-bar {
       display: flex;
       align-items: center;
       gap: 12px;
       font-size: 0.88rem;
-      color: #94a3b8;
+      color: var(--text-dim);
       flex: 0 0 auto;
     }
     .status-bar .dot { width: 12px; height: 12px; flex-basis: 12px; }
     .btn-retry {
       margin-left: auto;
-      background: #3b82f6;
+      background: var(--accent);
       border: none;
       color: white;
       padding: 8px 22px;
@@ -387,222 +501,243 @@
       font-size: 0.85rem;
       transition: background 0.2s;
     }
-    .btn-retry:hover { background: #2563eb; }
+    .btn-retry:hover { background: var(--accent-border); }
 
-    /* ===== 插件视图 ===== */
-    #view-plugins { padding: 22px 26px; gap: 16px; overflow-y: auto; }
+    /* ===== 插件视图（紧凑布局：已安装/官方包/社区表一屏可见） ===== */
+    #view-plugins { padding: 14px 18px; gap: 10px; overflow-y: auto; }
     .section-title {
-      font-size: 1.25rem;
+      font-size: 1.08rem;
       font-weight: 600;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      margin-top: 2px;
     }
+    .section-title .ticon { font-size: 1.05rem; color: var(--text-dim); }
     .section-title .badge {
-      font-size: 0.72rem;
-      background: #1e293b;
-      color: #94a3b8;
-      padding: 3px 12px;
+      font-size: 0.7rem;
+      background: var(--card);
+      color: var(--text-dim);
+      padding: 2px 10px;
       border-radius: 30px;
       font-weight: 400;
     }
     .plugins-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }
     .plugins-actions button {
-      background: #1d4ed8;
+      background: var(--accent-strong);
       border: none;
-      color: #fff;
-      padding: 8px 20px;
+      color: var(--accent-text);
+      padding: 6px 16px;
       border-radius: 10px;
-      font-size: 0.85rem;
+      font-size: 0.83rem;
       font-weight: 500;
       cursor: pointer;
     }
-    .plugins-actions button:hover { background: #2563eb; }
+    .plugins-actions button:hover { background: var(--accent); }
     .plugins-actions button:disabled { opacity: 0.5; cursor: wait; }
     #plugins-search {
-      width: 280px;
-      background: #1e293b;
-      border: 1px solid #334155;
+      width: 260px;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
       border-radius: 8px;
-      color: #e2e8f0;
-      padding: 7px 14px;
-      font-size: 0.85rem;
+      color: var(--text);
+      padding: 6px 12px;
+      font-size: 0.83rem;
       outline: none;
     }
-    #plugins-search:focus { border-color: #2563eb; }
-    .plugin-cats { display: flex; flex-wrap: wrap; gap: 8px; }
+    #plugins-search:focus { border-color: var(--accent-border); }
+    .plugin-cats { display: flex; flex-wrap: wrap; gap: 6px; }
     .cat-chip {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #94a3b8;
-      padding: 5px 14px;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      color: var(--text-dim);
+      padding: 3px 11px;
       border-radius: 30px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       cursor: pointer;
     }
-    .cat-chip:hover { color: #e2e8f0; }
-    .cat-chip.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
-    .installed-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chip {
-      background: #1e293b;
-      border: 1px solid #334155;
-      padding: 5px 14px;
-      border-radius: 30px;
-      font-size: 0.8rem;
-      color: #cbd5e1;
+    .cat-chip:hover { color: var(--text); }
+    .cat-chip.active { background: var(--accent-strong); border-color: var(--accent-border); color: var(--accent-text); }
+    /* 已安装：单行横向滚动，不撑高页面 */
+    .installed-chips {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 2px;
     }
-    .chip b { color: #93c5fd; font-weight: 600; }
+    .installed-chips::-webkit-scrollbar { height: 4px; }
+    .installed-chips::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+    .chip {
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      padding: 3px 11px;
+      border-radius: 30px;
+      font-size: 0.76rem;
+      color: var(--text-bright);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .chip b { color: var(--link); font-weight: 600; }
     .official-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 8px;
     }
     .official-card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      padding: 8px 10px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
     }
     .official-name {
       font-family: 'JetBrains Mono', monospace;
-      color: #93c5fd;
+      color: var(--link);
       font-weight: 600;
-      font-size: 0.85rem;
+      font-size: 0.78rem;
       word-break: break-all;
     }
-    .official-desc { font-size: 0.78rem; color: #64748b; }
+    .official-desc {
+      font-size: 0.72rem;
+      color: var(--text-faint);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
     .official-card button {
       margin-top: auto;
       align-self: flex-start;
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      padding: 5px 16px;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text-bright);
+      padding: 4px 12px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
     }
-    .official-card button:hover:not(:disabled) { background: #334155; }
+    .official-card button:hover:not(:disabled) { background: var(--hover); }
     .official-card button:disabled { opacity: 0.5; }
     .plugin-table {
       width: 100%;
       border-collapse: collapse;
-      background: #1e293b;
-      border-radius: 14px;
+      background: var(--card);
+      border-radius: 12px;
       overflow: hidden;
-      border: 1px solid #334155;
+      border: 1px solid var(--border-strong);
     }
     .plugin-table th {
       text-align: left;
-      padding: 10px 14px;
-      font-size: 0.75rem;
-      color: #94a3b8;
-      background: #0f172a;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      background: var(--panel);
       font-weight: 500;
-      border-bottom: 1px solid #334155;
+      border-bottom: 1px solid var(--border-strong);
     }
     .plugin-table td {
-      padding: 11px 14px;
-      font-size: 0.86rem;
-      border-bottom: 1px solid #1e293b;
+      padding: 7px 10px;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border);
       vertical-align: middle;
     }
     .plugin-table tr:last-child td { border-bottom: none; }
     .plugin-table .pkg { font-family: 'JetBrains Mono', monospace; }
-    .plugin-table .pkg a { color: #93c5fd; font-weight: 600; text-decoration: none; }
+    .plugin-table .pkg a { color: var(--link); font-weight: 600; text-decoration: none; }
     .plugin-table .pkg a:hover { text-decoration: underline; }
-    .plugin-table .ver { color: #94a3b8; font-size: 0.8rem; }
-    .plugin-table .desc { color: #64748b; font-size: 0.8rem; }
+    .plugin-table .ver { color: var(--text-dim); font-size: 0.76rem; }
+    .plugin-table .ver-src { color: var(--text-faint); font-size: 0.72rem; font-style: italic; }
+    .plugin-table .desc { color: var(--text-faint); font-size: 0.76rem; }
     .tag {
       display: inline-block;
-      font-size: 0.7rem;
-      padding: 2px 10px;
+      font-size: 0.68rem;
+      padding: 2px 8px;
       border-radius: 30px;
-      margin-left: 6px;
+      margin-left: 4px;
       vertical-align: middle;
     }
-    .tag.installed { background: #14532d; color: #4ade80; }
-    .tag.update { background: #7c2d12; color: #fb923c; animation: pulse 1.5s infinite; }
-    .tag.latest { background: #1e293b; color: #94a3b8; }
+    .tag.installed { background: var(--ok-soft); color: var(--ok-text); }
+    .tag.update { background: var(--warn-soft); color: var(--warn-text); animation: pulse 1.5s infinite; }
+    .tag.latest { background: var(--card-2); color: var(--text-dim); }
     .install-btn {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      padding: 5px 16px;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text-bright);
+      padding: 4px 12px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.8rem;
-      margin-left: 6px;
+      font-size: 0.75rem;
+      margin-left: 4px;
     }
-    .install-btn:hover { background: #334155; }
+    .install-btn:hover { background: var(--hover); }
     .install-btn:disabled { opacity: 0.4; cursor: wait; }
-    .plugin-loading { color: #64748b; font-size: 0.85rem; }
+    .plugin-loading { color: var(--text-faint); font-size: 0.83rem; }
 
     /* ===== 设置视图 ===== */
-    #view-settings { padding: 22px 26px; gap: 16px; overflow-y: auto; }
+    #view-settings { padding: 16px 20px; gap: 12px; overflow-y: auto; }
     .setting-group {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
       border-radius: 14px;
-      padding: 18px 20px;
+      padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
       max-width: 720px;
     }
-    .setting-label { font-size: 1rem; font-weight: 600; }
-    .setting-desc { font-size: 0.82rem; color: #94a3b8; line-height: 1.6; }
+    .setting-label { font-size: 0.98rem; font-weight: 600; }
+    .setting-desc { font-size: 0.8rem; color: var(--text-dim); line-height: 1.6; }
     .setting-radio {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 0.9rem;
-      color: #cbd5e1;
+      font-size: 0.88rem;
+      color: var(--text-bright);
       cursor: pointer;
     }
-    .setting-radio input[type="radio"] { accent-color: #3b82f6; }
+    .setting-radio input[type="radio"] { accent-color: var(--accent); }
     #registry-custom {
       flex: 1;
       max-width: 340px;
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #e2e8f0;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
       border-radius: 8px;
       padding: 6px 10px;
       font-size: 0.85rem;
       font-family: 'JetBrains Mono', monospace;
       outline: none;
     }
-    #registry-custom:focus { border-color: #2563eb; }
+    #registry-custom:focus { border-color: var(--accent-border); }
     .setting-row { display: flex; align-items: center; gap: 12px; }
     .setting-row button, .setting-group > button {
       align-self: flex-start;
-      background: #1d4ed8;
+      background: var(--accent-strong);
       border: none;
-      color: #fff;
+      color: var(--accent-text);
       padding: 8px 20px;
       border-radius: 10px;
       font-size: 0.85rem;
       font-weight: 500;
       cursor: pointer;
     }
-    .setting-row button:hover, .setting-group > button:hover { background: #2563eb; }
-    .setting-saved { font-size: 0.82rem; color: #4ade80; }
+    .setting-row button:hover, .setting-group > button:hover { background: var(--accent); }
+    .setting-saved { font-size: 0.82rem; color: var(--ok-text); }
 
     /* ===== Node.js 环境准备向导（覆盖层） ===== */
     #node-wizard {
       position: fixed;
       inset: 0;
       z-index: 999;
-      background: rgba(5, 10, 24, 0.88);
+      background: var(--overlay);
       backdrop-filter: blur(6px);
       display: none;
       align-items: center;
@@ -614,14 +749,14 @@
       max-width: calc(100vw - 60px);
       max-height: calc(100vh - 80px);
       overflow-y: auto;
-      background: #0f172a;
-      border: 1px solid #2d3748;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
       border-radius: 18px;
       padding: 24px 26px;
       display: flex;
       flex-direction: column;
       gap: 14px;
-      box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 24px 60px -12px var(--shadow);
     }
     .node-title {
       font-size: 1.2rem;
@@ -630,12 +765,12 @@
       align-items: center;
       gap: 10px;
     }
-    .node-title .badge { font-size: 0.7rem; background: #1e293b; color: #94a3b8; padding: 3px 10px; border-radius: 30px; font-weight: 400; }
+    .node-title .badge { font-size: 0.7rem; background: var(--card); color: var(--text-dim); padding: 3px 10px; border-radius: 30px; font-weight: 400; }
     .node-status {
       font-size: 0.88rem;
-      color: #cbd5e1;
-      background: #1e293b;
-      border: 1px solid #334155;
+      color: var(--text-bright);
+      background: var(--card);
+      border: 1px solid var(--border-strong);
       border-radius: 10px;
       padding: 10px 14px;
       line-height: 1.6;
@@ -644,27 +779,27 @@
     }
     .node-progress-wrap {
       height: 8px;
-      background: #1e293b;
+      background: var(--card);
       border-radius: 30px;
       overflow: hidden;
-      border: 1px solid #334155;
+      border: 1px solid var(--border-strong);
     }
     .node-progress-bar {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #3b82f6, #a78bfa);
+      background: var(--progress);
       border-radius: 30px;
       transition: width 0.25s ease;
     }
     .node-log {
-      background: #0b1120;
-      border: 1px solid #2d3748;
+      background: var(--bg);
+      border: 1px solid var(--border-soft);
       border-radius: 10px;
       padding: 10px 14px;
       font-family: 'JetBrains Mono', 'Fira Code', monospace;
       font-size: 0.78rem;
       line-height: 1.7;
-      color: #94a3b8;
+      color: var(--text-dim);
       height: 96px;
       overflow-y: auto;
       white-space: pre-wrap;
@@ -675,56 +810,64 @@
       flex-direction: column;
       gap: 8px;
       font-size: 0.88rem;
-      color: #cbd5e1;
+      color: var(--text-bright);
     }
     .node-sources label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-    .node-sources input[type="radio"] { accent-color: #3b82f6; }
+    .node-sources input[type="radio"] { accent-color: var(--accent); }
     .node-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .node-actions button {
-      background: #1d4ed8;
+      background: var(--accent-strong);
       border: none;
-      color: #fff;
+      color: var(--accent-text);
       padding: 9px 22px;
       border-radius: 10px;
       font-size: 0.88rem;
       font-weight: 500;
       cursor: pointer;
     }
-    .node-actions button:hover:not(:disabled) { background: #2563eb; }
+    .node-actions button:hover:not(:disabled) { background: var(--accent); }
     .node-actions button:disabled { opacity: 0.5; cursor: wait; }
-    .node-actions .secondary { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; }
-    .node-actions .secondary:hover:not(:disabled) { background: #334155; }
+    .node-actions .secondary { background: var(--card); border: 1px solid var(--border-strong); color: var(--text-bright); }
+    .node-actions .secondary:hover:not(:disabled) { background: var(--hover); }
   </style>
 </head>
 <body>
   <!-- 左侧边栏（可折叠窄条） -->
   <aside id="sidebar">
-    <div class="brand" id="brand-toggle" role="button" title="折叠/展开侧边栏 (⌘B)">
+    <div class="brand" id="brand-toggle" role="button" data-i18n-title="sidebar.toggle">
       <span class="name">OpenHarness</span>
       <span class="name-short">OH</span>
     </div>
     <nav>
       <button class="nav-btn active" data-view="chat">
-        <span class="icon">💬</span>
-        <span class="label">对话</span>
+        <span class="icon"><i data-icon="message-square"></i></span>
+        <span class="label" data-i18n="nav.chat">对话</span>
       </button>
       <button class="nav-btn" data-view="logs">
-        <span class="icon">🖥️</span>
-        <span class="label">日志</span>
+        <span class="icon"><i data-icon="terminal"></i></span>
+        <span class="label" data-i18n="nav.logs">日志</span>
       </button>
       <button class="nav-btn" data-view="plugins">
-        <span class="icon">🧩</span>
-        <span class="label">插件</span>
+        <span class="icon"><i data-icon="puzzle"></i></span>
+        <span class="label" data-i18n="nav.plugins">插件</span>
       </button>
       <button class="nav-btn" data-view="settings">
-        <span class="icon">⚙️</span>
-        <span class="label">设置</span>
+        <span class="icon"><i data-icon="settings"></i></span>
+        <span class="label" data-i18n="nav.settings">设置</span>
       </button>
     </nav>
     <div class="sidebar-foot">
       <div class="dsh-status">
         <span class="dot waiting" id="side-dot"></span>
-        <span id="side-status">DSH 启动中…</span>
+        <span id="side-status" data-i18n="sidebar.status.starting">DSH 启动中…</span>
+      </div>
+      <div class="foot-actions">
+        <button class="foot-btn" id="theme-toggle" data-i18n-title="theme.toggle">
+          <i data-icon="moon"></i>
+        </button>
+        <button class="foot-btn" id="lang-toggle" data-i18n-title="lang.toggle">
+          <i data-icon="globe"></i>
+        </button>
       </div>
     </div>
   </aside>
@@ -735,64 +878,87 @@
     <section id="view-chat" class="view active">
       <div id="tabbar">
         <div id="tab-list"></div>
-        <button id="tab-new" title="新建标签页">＋</button>
+        <button id="tab-new" data-i18n-title="tab.new">
+          <i data-icon="plus"></i>
+        </button>
       </div>
       <div id="urlbar">
-        <button class="url-btn" id="url-back" title="后退">←</button>
-        <button class="url-btn" id="url-fwd" title="前进">→</button>
-        <button class="url-btn" id="url-reload" title="刷新">🔄</button>
-        <button class="url-btn" id="url-home" title="新标签页主页">🏠</button>
-        <input id="url-input" placeholder="输入网址或搜索内容，回车前往…" spellcheck="false" autocomplete="off" />
-        <button class="url-go" id="url-go">前往</button>
+        <button class="url-btn" id="url-back" data-i18n-title="url.back">
+          <i data-icon="arrow-left"></i>
+        </button>
+        <button class="url-btn" id="url-fwd" data-i18n-title="url.fwd">
+          <i data-icon="arrow-right"></i>
+        </button>
+        <button class="url-btn" id="url-reload" data-i18n-title="url.reload">
+          <i data-icon="refresh-cw"></i>
+        </button>
+        <button class="url-btn" id="url-home" data-i18n-title="url.home">
+          <i data-icon="house"></i>
+        </button>
+        <input id="url-input" data-i18n-placeholder="url.placeholder" placeholder="输入网址或搜索内容，回车前往…" spellcheck="false" autocomplete="off" />
+        <button class="url-go" id="url-go" data-i18n="url.go">前往</button>
       </div>
       <div id="iframe-stack"></div>
     </section>
 
     <!-- 日志 -->
     <section id="view-logs" class="view">
-      <div id="log-area">
-        ⏳ 正在初始化 DSH 环境...
-        <br />📦 首次运行会自动下载依赖，请耐心等待；国内网络慢可在「设置」切换淘宝镜像源。
-      </div>
+      <div id="log-area"></div>
       <div class="status-bar">
         <span class="dot waiting" id="indicator"></span>
-        <span id="status-text">🚀 启动中，等待服务就绪...</span>
-        <button class="btn-retry" id="retry-btn">🔄 重新启动</button>
+        <span id="status-text" data-i18n="status.starting">启动中，等待服务就绪…</span>
+        <button class="btn-retry btn-icon" id="retry-btn">
+          <i data-icon="refresh-cw"></i>
+          <span data-i18n="logs.retry">重新启动</span>
+        </button>
       </div>
     </section>
 
     <!-- 插件中心 -->
     <section id="view-plugins" class="view">
       <div class="section-title">
-        🧩 插件中心
-        <span class="badge">安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成</span>
+        <span class="ticon"><i data-icon="puzzle"></i></span>
+        <span data-i18n="plugins.title">插件中心</span>
+        <span class="badge" data-i18n="plugins.titleBadge">安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成</span>
       </div>
       <div class="plugins-actions">
-        <button id="plugins-refresh">📡 刷新插件索引</button>
-        <input id="plugins-search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
+        <button id="plugins-refresh" class="btn-icon">
+          <i data-icon="refresh-cw"></i>
+          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+        </button>
+        <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
       </div>
       <div id="plugin-cats" class="plugin-cats"></div>
 
-      <div class="section-title" style="font-size:1.05rem; margin-top:6px;">
-        已安装（web profile）
+      <div class="section-title">
+        <span class="ticon"><i data-icon="circle-check"></i></span>
+        <span data-i18n="plugins.installedTitle">已安装（web profile）</span>
         <span class="badge" id="profile-path"></span>
       </div>
-      <div class="installed-chips" id="installed-chips">加载中…</div>
+      <div class="installed-chips" id="installed-chips"></div>
 
-      <div class="section-title" style="font-size:1.05rem; margin-top:10px;">
-        官方组合包
-        <span class="badge">@deepseek-ai 核心包</span>
+      <div class="section-title">
+        <span class="ticon"><i data-icon="package"></i></span>
+        <span data-i18n="plugins.officialTitle">官方组合包</span>
+        <span class="badge" data-i18n="plugins.officialBadge">@deepseek-ai 核心包</span>
       </div>
       <div class="official-grid" id="official-grid"></div>
 
-      <div class="section-title" style="font-size:1.05rem; margin-top:10px;">
-        社区插件（awesome-dsh-plugin）
+      <div class="section-title">
+        <span class="ticon"><i data-icon="boxes"></i></span>
+        <span data-i18n="plugins.communityTitle">社区插件（awesome-dsh-plugin）</span>
         <span class="badge" id="plugin-count">-</span>
       </div>
-      <div id="plugin-loading" class="plugin-loading">⏳ 正在获取插件索引…</div>
+      <div id="plugin-loading" class="plugin-loading"></div>
       <table class="plugin-table" id="plugin-table" style="display:none;">
         <thead>
-          <tr><th>插件</th><th>版本</th><th>状态</th><th>描述</th><th></th></tr>
+          <tr>
+            <th data-i18n="plugins.col.name">插件</th>
+            <th data-i18n="plugins.col.version">版本</th>
+            <th data-i18n="plugins.col.status">状态</th>
+            <th data-i18n="plugins.col.desc">描述</th>
+            <th></th>
+          </tr>
         </thead>
         <tbody id="plugin-tbody"></tbody>
       </table>
@@ -800,52 +966,88 @@
 
     <!-- 设置 -->
     <section id="view-settings" class="view">
-      <div class="section-title">⚙️ 设置</div>
+      <div class="section-title">
+        <span class="ticon"><i data-icon="settings"></i></span>
+        <span data-i18n="settings.title">设置</span>
+      </div>
 
       <div class="setting-group">
-        <div class="setting-label">npm 镜像源</div>
-        <div class="setting-desc">
-          影响首次下载 DSH 与安装插件（npx / pnpm 全链路生效）。已缓存的包不受影响；
-          镜像对新发布包的同步可能有几分钟延迟，若安装报 404 可到 npmmirror.com/sync 手动触发同步。
+        <div class="setting-label" data-i18n="settings.registry.title">npm 镜像源</div>
+        <div class="setting-desc" data-i18n="settings.registry.desc">
+          影响首次下载 DSH 与安装插件（npx / pnpm 全链路生效）。已缓存的包不受影响；镜像对新发布包的同步可能有几分钟延迟，若安装报 404 可到 npmmirror.com/sync 手动触发同步。
         </div>
-        <label class="setting-radio"><input type="radio" name="registry" value="" /> 官方默认（registry.npmjs.org）</label>
-        <label class="setting-radio"><input type="radio" name="registry" value="https://registry.npmmirror.com" /> 淘宝 npmmirror（国内加速，推荐）</label>
-        <label class="setting-radio"><input type="radio" name="registry" value="__custom" /> 自定义：
+        <label class="setting-radio"><input type="radio" name="registry" value="" /><span data-i18n="settings.registry.optOfficial">官方默认（registry.npmjs.org）</span></label>
+        <label class="setting-radio"><input type="radio" name="registry" value="https://registry.npmmirror.com" /><span data-i18n="settings.registry.optMirror">淘宝 npmmirror（国内加速，推荐）</span></label>
+        <label class="setting-radio"><input type="radio" name="registry" value="__custom" /><span data-i18n="settings.registry.optCustom">自定义：</span>
           <input id="registry-custom" placeholder="https://registry.example.com" spellcheck="false" />
         </label>
         <div class="setting-row">
-          <button id="registry-save">💾 保存</button>
+          <button id="registry-save" class="btn-icon">
+            <i data-icon="save"></i>
+            <span data-i18n="settings.registry.save">保存</span>
+          </button>
           <span id="registry-saved" class="setting-saved"></span>
         </div>
       </div>
 
       <div class="setting-group">
-        <div class="setting-label">Node.js 环境</div>
-        <div class="setting-desc">
-          DSH 依赖 Node.js（≥22.15，node:zlib zstd）+ npx。未安装时可让应用自动下载官方 / 淘宝 npmmirror /
-          清华 TUNA 的预编译包并内置到应用数据目录（无需 sudo，不污染系统）。
+        <div class="setting-label" data-i18n="settings.node.title">Node.js 环境</div>
+        <div class="setting-desc" data-i18n="settings.node.desc">
+          DSH 依赖 Node.js（≥22.15，node:zlib zstd）+ npx。未安装时可让应用自动下载官方 / 淘宝 npmmirror / 清华 TUNA 的预编译包并内置到应用数据目录（无需 sudo，不污染系统）。
         </div>
         <div class="setting-row">
-          <button id="settings-node-recheck">🔍 重新检测 Node</button>
-          <button id="settings-node-reinstall">⬇️ 重新下载安装 Node</button>
+          <button id="settings-node-recheck" class="btn-icon">
+            <i data-icon="search"></i>
+            <span data-i18n="settings.node.recheck">重新检测 Node</span>
+          </button>
+          <button id="settings-node-reinstall" class="btn-icon">
+            <i data-icon="download"></i>
+            <span data-i18n="settings.node.reinstall">重新下载安装 Node</span>
+          </button>
           <span id="settings-node-result" class="setting-saved"></span>
         </div>
       </div>
 
       <div class="setting-group">
-        <div class="setting-label">DSH 服务</div>
-        <div class="setting-desc">重启 DSH 使插件安装 / 卸载 / 更新及镜像配置生效（对话中的会话会中断）。</div>
+        <div class="setting-label" data-i18n="settings.dsh.title">DSH 服务</div>
+        <div class="setting-desc" data-i18n="settings.dsh.desc">重启 DSH 使插件安装 / 卸载 / 更新及镜像配置生效（对话中的会话会中断）。</div>
         <label class="setting-radio" style="align-items:flex-start;">
           <input type="checkbox" id="settings-close-with-app" style="margin-top:2px;" />
           <span>
-            关闭 app 时同时关闭 3080 上的 DSH 服务（<b>默认开启</b>，即 3080 跟随 app 开关机）。
-            <br />如果你习惯自己在终端里启动 DSH，可关闭此项：app 退出后 DSH 继续运行。
+            <span data-i18n="settings.dsh.closeLabel">关闭 app 时同时关闭 3080 上的 DSH 服务（<b>默认开启</b>，即 3080 跟随 app 开关机）。</span>
+            <br /><span data-i18n="settings.dsh.closeSub">如果你习惯自己在终端里启动 DSH，可关闭此项：app 退出后 DSH 继续运行。</span>
           </span>
         </label>
         <div class="setting-row">
-          <button id="settings-restart">🔄 重启 DSH</button>
+          <button id="settings-restart" class="btn-icon">
+            <i data-icon="refresh-cw"></i>
+            <span data-i18n="settings.dsh.restart">重启 DSH</span>
+          </button>
           <span id="settings-lc-saved" class="setting-saved"></span>
         </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="sun-moon"></i>
+          <span data-i18n="settings.appearance.title">外观</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.appearance.desc">
+          切换界面浅色 / 深色主题。对话标签内的网页内容由 DSH 自身控制，不随此切换。
+        </div>
+        <label class="setting-radio"><input type="radio" name="theme" value="system" /><span data-i18n="settings.appearance.system">跟随系统</span></label>
+        <label class="setting-radio"><input type="radio" name="theme" value="light" /><span data-i18n="settings.appearance.light">亮色</span></label>
+        <label class="setting-radio"><input type="radio" name="theme" value="dark" /><span data-i18n="settings.appearance.dark">暗色</span></label>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="languages"></i>
+          <span data-i18n="settings.lang.title">语言</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.lang.desc">界面语言切换（日志与进程输出保持原文）。</div>
+        <label class="setting-radio"><input type="radio" name="lang" value="zh" /><span>中文</span></label>
+        <label class="setting-radio"><input type="radio" name="lang" value="en" /><span>English</span></label>
       </div>
     </section>
   </main>
@@ -854,24 +1056,31 @@
   <div id="node-wizard">
     <div class="node-card">
       <div class="node-title">
-        🛠️ Node.js 环境准备
-        <span class="badge">DSH 需要 Node.js ≥ 22.15 + npx</span>
+        <i data-icon="wrench"></i>
+        <span data-i18n="wizard.title">Node.js 环境准备</span>
+        <span class="badge" data-i18n="wizard.badge">DSH 需要 Node.js ≥ 22.15 + npx</span>
       </div>
-      <div class="node-status" id="node-status">检测中…</div>
+      <div class="node-status" id="node-status" data-i18n="wizard.status">检测中…</div>
       <div class="node-progress-wrap">
         <div class="node-progress-bar" id="node-progress-bar"></div>
       </div>
       <div class="node-log" id="node-log"></div>
       <div class="node-sources">
-        <div style="font-size:0.85rem; color:#94a3b8;">选择下载源（下载太慢或失败可换源重试；自动模式会依次回退）：</div>
-        <label><input type="radio" name="node-source" value="auto" checked /> 自动回退（官方 → 淘宝 npmmirror → 清华 TUNA）</label>
-        <label><input type="radio" name="node-source" value="official" /> 官方 nodejs.org</label>
-        <label><input type="radio" name="node-source" value="npmmirror" /> 淘宝 npmmirror（国内加速，推荐）</label>
-        <label><input type="radio" name="node-source" value="tuna" /> 清华 TUNA（同步滞后，使用其已同步的 v22 版本）</label>
+        <div style="font-size:0.85rem; color:var(--text-faint);" data-i18n="wizard.sourceTitle">选择下载源（下载太慢或失败可换源重试；自动模式会依次回退）：</div>
+        <label><input type="radio" name="node-source" value="auto" checked /><span data-i18n="wizard.auto">自动回退（官方 → 淘宝 npmmirror → 清华 TUNA）</span></label>
+        <label><input type="radio" name="node-source" value="official" /><span data-i18n="wizard.official">官方 nodejs.org</span></label>
+        <label><input type="radio" name="node-source" value="npmmirror" /><span data-i18n="wizard.npmmirror">淘宝 npmmirror（国内加速，推荐）</span></label>
+        <label><input type="radio" name="node-source" value="tuna" /><span data-i18n="wizard.tuna">清华 TUNA（同步滞后，使用其已同步的 v22 版本）</span></label>
       </div>
       <div class="node-actions">
-        <button id="node-install">⬇️ 下载并安装 Node.js</button>
-        <button id="node-recheck" class="secondary">🔄 重新检测</button>
+        <button id="node-install" class="btn-icon">
+          <i data-icon="download"></i>
+          <span data-i18n="wizard.install">下载并安装 Node.js</span>
+        </button>
+        <button id="node-recheck" class="secondary btn-icon">
+          <i data-icon="refresh-cw"></i>
+          <span data-i18n="wizard.recheck">重新检测</span>
+        </button>
       </div>
     </div>
   </div>

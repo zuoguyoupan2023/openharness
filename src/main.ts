@@ -12,6 +12,9 @@ import {
   onNodeReady,
   progressPercent,
 } from "./node";
+import { mountIcons, iconSvg } from "./icons";
+import { initLang, setLang, getLang, t } from "./i18n";
+import { initTheme, cycleTheme, effectiveTheme } from "./theme";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -47,13 +50,13 @@ function switchView(name: string): void {
 }
 
 async function launch(): Promise<void> {
-  appendLog("⏳ 正在启动 DeepSeek Harness...");
-  setStatus("waiting", "🚀 启动中，等待服务就绪...");
+  appendLog(t("app.startLog"));
+  setStatus("waiting", t("status.starting"));
   try {
     appendLog(await startDsh());
   } catch (e) {
-    appendLog("❌ 启动出错: " + String(e));
-    setStatus("error", "⚠️ 启动失败，请检查 Node.js (>=22.15) 与网络；可在「设置」查看 Node 环境");
+    appendLog(t("app.startErr") + String(e));
+    setStatus("error", t("status.error"));
   }
 }
 
@@ -92,28 +95,28 @@ function showNodeWizard(initialMsg: string): void {
       if (p.phase === "done") status.textContent = p.message;
     });
     onNodeReady((r) => {
-      status.textContent = "✅ Node.js " + r.version + " 已就绪，正在启动 DSH...";
+      status.textContent = t("node.ready", { v: r.version });
       bar.style.width = "100%";
       log.textContent +=
-        "✅ Node.js " + r.version + " 安装成功（" + r.path + "）\n" +
-        "🚀 正在启动 DSH（自动预装高亮插件 adhdgofly-dsh-ext，就绪后自动打开对话标签）...\n";
+        t("node.installed", { v: r.version, path: r.path }) + "\n" +
+        t("node.autoInstall") + "\n";
       wizard.classList.remove("show");
       void launch();
     });
     onNodeFail((msg) => {
-      status.textContent = "❌ " + msg;
-      log.textContent += "❌ " + msg + "\n";
-      log.textContent += "💡 可切换「淘宝 npmmirror / 清华 TUNA」源后重试，或先手动安装 Node.js。\n";
+      status.textContent = t("node.fail") + msg;
+      log.textContent += t("node.fail") + msg + "\n";
+      log.textContent += t("node.failHint") + "\n";
       setBusy(false);
     });
 
     installBtn.addEventListener("click", async () => {
       setBusy(true);
-      log.textContent += "⏳ 开始下载 Node.js...\n";
+      log.textContent += t("node.downloading") + "\n";
       try {
         await downloadNode(source());
       } catch (e) {
-        log.textContent += "❌ " + String(e) + "\n";
+        log.textContent += t("node.errDownload") + String(e) + "\n";
         setBusy(false);
       }
     });
@@ -134,6 +137,12 @@ function showNodeWizard(initialMsg: string): void {
 }
 
 async function boot(): Promise<void> {
+  // ===== 初始化：图标（lucide 内联 SVG）/ 语言 / 主题 =====
+  mountIcons();
+  initLang();
+  initTheme();
+  $("log-area").textContent = t("logs.initial1") + "\n" + t("logs.initial2");
+
   window.addEventListener("error", (e) => {
     appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
   });
@@ -192,27 +201,27 @@ async function boot(): Promise<void> {
     if (!n.ok) showNodeWizard(n.message);
   });
   $("settings-node-reinstall").addEventListener("click", () => {
-    showNodeWizard("⬇️ 选择下载源后点击「下载并安装 Node.js」。若已内置旧版本，将被替换为新版本。");
+    showNodeWizard(t("node.reinstallHint"));
   });
 
   // ===== DSH 状态事件 =====
   onReady((url) => {
-    setStatus("running", "✅ DSH 运行中");
-    appendLog("✅ DSH 就绪: " + url);
+    setStatus("running", t("status.running"));
+    appendLog(t("app.dshReadyLog") + url);
     tabManager.markDshReady();
     switchView("chat");
   });
   onExit(() => {
-    appendLog("⚠️ DSH 进程已退出");
+    appendLog(t("app.dshExited"));
     setTimeout(async () => {
       try {
         await fetch("http://127.0.0.1:3080/", { mode: "no-cors" });
-        appendLog("✅ 检测到外部 DSH 已在 3080 运行，直接连接");
-        setStatus("running", "✅ DSH 运行中");
+        appendLog(t("app.externalDetected"));
+        setStatus("running", t("status.external"));
         tabManager.markDshReady();
         switchView("chat");
       } catch {
-        setStatus("error", "⚠️ DSH 已退出，可在日志页点击重新启动");
+        setStatus("error", t("status.exit"));
       }
     }, 1500);
   });
@@ -241,6 +250,25 @@ async function boot(): Promise<void> {
       }
     });
   }
+
+  // ===== 主题 / 语言快捷开关（侧边栏底部） =====
+  const themeBtn = document.getElementById("theme-toggle");
+  const updateThemeIcon = (): void => {
+    const holder = themeBtn?.querySelector<HTMLElement>("i[data-icon]");
+    if (!holder) return;
+    // 显示「另一个」主题的图标：当前暗色 → 显示太阳（点一下变亮）
+    const name = effectiveTheme() === "dark" ? "sun" : "moon";
+    holder.dataset.icon = name;
+    holder.innerHTML = iconSvg(name);
+  };
+  themeBtn?.addEventListener("click", () => cycleTheme());
+  window.addEventListener("theme-changed", updateThemeIcon);
+  updateThemeIcon();
+
+  const langBtn = document.getElementById("lang-toggle");
+  langBtn?.addEventListener("click", () => {
+    setLang(getLang() === "zh" ? "en" : "zh");
+  });
 
   // ===== 启动：检查 Node 环境 =====
   await initNodeEvents();

@@ -6,6 +6,7 @@ import { DSH_URL } from "./dsh";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { t } from "./i18n";
 
 export type TabType = "dsh" | "web" | "blank";
 
@@ -22,13 +23,13 @@ export interface TabData {
 const SEARCH_ENGINE = "https://www.bing.com/search?q=";
 const STORAGE_KEY = "openharness-tabs-v1";
 
-const HOME_LINKS: Array<{ label: string; url: string }> = [
-  { label: "🧠 DeepSeek Harness 主界面", url: DSH_URL },
-  { label: "📦 npm", url: "https://www.npmjs.com" },
-  { label: "🐙 GitHub", url: "https://github.com" },
-  { label: "🔧 DeepSeek-Harness 仓库", url: "https://github.com/deepseek-ai/DeepSeek-Harness" },
-  { label: "🧩 awesome-dsh-plugin", url: "https://awesome-dsh-plugin.com" },
-  { label: "📖 DSH 插件开发文档", url: "https://github.com/deepseek-ai/DeepSeek-Harness/blob/master/docs/user/develop/basic/index.zh.md" },
+const HOME_LINKS: Array<{ i18nKey: string; url: string }> = [
+  { i18nKey: "link.dsh", url: DSH_URL },
+  { i18nKey: "link.npm", url: "https://www.npmjs.com" },
+  { i18nKey: "link.github", url: "https://github.com" },
+  { i18nKey: "link.repo", url: "https://github.com/deepseek-ai/DeepSeek-Harness" },
+  { i18nKey: "link.awesome", url: "https://awesome-dsh-plugin.com" },
+  { i18nKey: "link.docs", url: "https://github.com/deepseek-ai/DeepSeek-Harness/blob/master/docs/user/develop/basic/index.zh.md" },
 ];
 
 /** Rust 端 webview 事件负载 */
@@ -217,7 +218,7 @@ export class TabManager {
     const u = url ?? (type === "dsh" ? DSH_URL : "");
     const tab: TabData = {
       id: makeId(),
-      title: type === "dsh" ? "DeepSeek Harness" : type === "blank" ? "新标签页" : hostOf(u),
+      title: type === "dsh" ? "DeepSeek Harness" : type === "blank" ? t("tab.untitled") : hostOf(u),
       url: u,
       type,
       history: u ? [u] : [],
@@ -380,15 +381,15 @@ export class TabManager {
     }
     if (saved && Array.isArray(saved.tabs) && saved.tabs.length > 0) {
       this.tabs = saved.tabs
-        .filter((t) => t && typeof t.id === "string")
-        .map((t) => ({
-          id: t.id,
-          title: t.title || "标签页",
-          url: t.url || "",
-          type: t.type === "dsh" ? "dsh" : t.type === "blank" ? "blank" : "web",
-          history: Array.isArray(t.history) ? t.history : t.url ? [t.url] : [],
+        .filter((tab) => tab && typeof tab.id === "string")
+        .map((tab) => ({
+          id: tab.id,
+          title: tab.title || t("tab.untitled"),
+          url: tab.url || "",
+          type: tab.type === "dsh" ? "dsh" : tab.type === "blank" ? "blank" : "web",
+          history: Array.isArray(tab.history) ? tab.history : tab.url ? [tab.url] : [],
           historyIdx:
-            typeof t.historyIdx === "number" && t.historyIdx >= 0 ? t.historyIdx : 0,
+            typeof tab.historyIdx === "number" && tab.historyIdx >= 0 ? tab.historyIdx : 0,
         }));
       this.activeId = saved.active || this.tabs[0].id;
       if (!this.tabs.some((t) => t.id === this.activeId)) this.activeId = this.tabs[0].id;
@@ -434,8 +435,8 @@ export class TabManager {
       overlay.style.display = "flex";
       overlay.innerHTML = `
         <div class="spinner"></div>
-        <div>⏳ 正在启动 DeepSeek Harness，请稍候…</div>
-        <div style="font-size:0.8rem;opacity:.7;">可在左侧「日志」查看启动进度</div>`;
+        <div>${t("chat.waiting")}</div>
+        <div style="font-size:0.8rem;opacity:.7;">${t("chat.waitingHint")}</div>`;
     } else if (tab.type === "blank") {
       overlay.style.display = "flex";
       overlay.innerHTML = this.newTabPageHtml();
@@ -456,12 +457,12 @@ export class TabManager {
 
   private newTabPageHtml(): string {
     const links = HOME_LINKS.map(
-      (l) => `<button class="quick-link" data-url="${l.url}">${l.label}</button>`
+      (l) => `<button class="quick-link" data-url="${l.url}">${t(l.i18nKey)}</button>`
     ).join("");
     return `
       <div class="newtab">
-        <div class="newtab-title">🖖 新标签页</div>
-        <div class="newtab-sub">在网址栏输入网址，或直接搜索；常用入口：</div>
+        <div class="newtab-title">${t("newtab.title")}</div>
+        <div class="newtab-sub">${t("newtab.sub")}</div>
         <div class="quick-links">${links}</div>
       </div>`;
   }
@@ -469,7 +470,7 @@ export class TabManager {
   private loadUrl(tab: TabData, url: string): void {
     tab.url = url;
     tab.title =
-      tab.type === "dsh" ? "DeepSeek Harness" : tab.type === "blank" ? "新标签页" : hostOf(url);
+      tab.type === "dsh" ? "DeepSeek Harness" : tab.type === "blank" ? t("tab.untitled") : hostOf(url);
     const pane = this.ensurePane(tab);
     const frame = pane.querySelector<HTMLIFrameElement>("iframe");
     const overlay = pane.querySelector<HTMLElement>(".tab-overlay")!;
@@ -518,24 +519,24 @@ export class TabManager {
 
   private renderTabBar(): void {
     this.tabListEl.innerHTML = "";
-    this.tabs.forEach((t) => {
+    this.tabs.forEach((tab) => {
       const el = document.createElement("div");
-      el.className = "tab" + (t.id === this.activeId ? " active" : "");
-      el.dataset.id = t.id;
+      el.className = "tab" + (tab.id === this.activeId ? " active" : "");
+      el.dataset.id = tab.id;
       const title = document.createElement("span");
       title.className = "tab-title";
-      title.textContent = t.title;
-      title.title = t.url || "";
+      title.textContent = tab.title;
+      title.title = tab.url || "";
       const x = document.createElement("button");
       x.className = "tab-x";
       x.textContent = "×";
-      x.title = "关闭标签";
+      x.title = t("tab.close");
       el.appendChild(title);
       el.appendChild(x);
-      el.addEventListener("click", () => this.activate(t.id));
+      el.addEventListener("click", () => this.activate(tab.id));
       x.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.closeTab(t.id);
+        this.closeTab(tab.id);
       });
       this.tabListEl.appendChild(el);
     });
