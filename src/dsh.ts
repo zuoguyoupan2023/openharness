@@ -58,6 +58,20 @@ export async function listInstalled(): Promise<InstalledPlugins> {
   }
 }
 
+/** 读取插件缓存（Rust 侧 $APP_DATA/plugin-cache.json；缺失返回空对象） */
+export async function getPluginCache(): Promise<Record<string, unknown>> {
+  try {
+    return (await invoke<Record<string, unknown>>("get_plugin_cache")) || {};
+  } catch {
+    return {};
+  }
+}
+
+/** 写入插件缓存（原子替换） */
+export async function setPluginCache(cache: Record<string, unknown>): Promise<void> {
+  await invoke("set_plugin_cache", { cache });
+}
+
 export function installedNames(p: InstalledPlugins): string[] {
   // deps 与 bundles 可能重叠（bundle 层通常同时是 dependency），去重避免重复 chips
   return [...new Set([...Object.keys(p.deps || {}), ...(p.bundles || [])])];

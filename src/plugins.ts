@@ -1,11 +1,17 @@
 // src/plugins.ts —— 插件中心
 // 定位（决策 C）：app 管「生命周期」（安装/更新/卸载/重启生效/版本检查），dsh web 管「配置」。
-// 索引来源：awesome-dsh-plugin.com/plugins.json（机器可读，143+ 社区插件）+ npm registry 补版本。
+// 索引来源：awesome-dsh-plugin.com/plugins.json（机器可读，社区插件）+ npm registry 补版本。
+// P0 收尾（2026-08-15）：
+//  - 缓存落盘：版本号缓存从 localStorage 升级为 Rust 侧 $APP_DATA/plugin-cache.json（get/set_plugin_cache）
+//  - 自动更新检查：启动 + 每 6 小时后台静默拉取已安装插件最新版本，侧边栏「插件」按钮角标提示可更新数
+//  - 插件详情页：点击插件行展开行内详情（完整描述 / 版本历史 npm time / README / 依赖 / 作者 / 许可证）
 import {
   listInstalled,
   installedNames,
   runDshCmd,
   restartDsh,
+  getPluginCache,
+  setPluginCache,
   type InstalledPlugins,
 } from "./dsh";
 import { t, getLang } from "./i18n";
@@ -25,6 +31,14 @@ interface CategoryMap {
   [key: string]: { en: string; zh: string };
 }
 
+/** Rust 侧插件缓存（$APP_DATA/plugin-cache.json） */
+interface PluginCache {
+  /** pkgName -> npm 最新版本（失败的 "—" 不落盘） */
+  versions: Record<string, string>;
+  /** 最近一次成功检查时间（ISO） */
+  updatedAt?: string;
+}
+
 const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
   { name: "@deepseek-ai/dsh-base", descKey: "plugins.official.base" },
   { name: "@deepseek-ai/dsh-web-app", descKey: "plugins.official.web" },
@@ -34,8 +48,27 @@ const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
 
 const INDEX_URL = "https://awesome-dsh-plugin.com/plugins.json";
 const CATEGORY_ORDER = ["ui", "theme", "session", "memory", "tools", "skill", "workflow", "notify", "model", "dev", "fun"];
-const VERSION_CACHE_KEY = "oh-plugin-versions";
-const BASELINE_KEY = "oh-plugin-baseline";
+/** 自动更新检查间隔：每 6 小时后台静默检查已安装插件 */
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** 旧版 localStorage 缓存键（一次性迁移到 Rust 侧后删除） */
+const LEGACY_VERSION_KEY = "oh-plugin-versions";
+const LEGACY_BASELINE_KEY = "oh-plugin-baseline";
+const REGISTRY_BASES = ["https://registry.npmjs.org", "https://registry.npmmirror.com"];
+
+/** npm registry 元数据（详情页用：版本历史 / README / 依赖 / 作者） */
+interface NpmMeta {
+  name?: string;
+  description?: string;
+  author?: string | { name?: string };
+  license?: string;
+  readme?: string;
+  "dist-tags"?: Record<string, string>;
+  time?: Record<string, string>;
+  versions?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+}
+
+/** 详情页元数据会话级缓存（同一插件只拉一次） */
+const metaCache = new Map<string, NpmMeta | null>();
 
 export interface PluginCenterOptions {
   /** 动作反馈：切到日志视图并追加一行日志 */
@@ -82,26 +115,49 @@ function pkgNameOf(spec: string): string {
   return spec;
 }
 
-async function fetchVersion(name: string): Promise<string> {
-  const tryFetch = async (base: string): Promise<string | null> => {
+/** 从安装 spec 解析可比较版本：^0.3.4 -> 0.3.4；file:/github:/workspace: 等返回 null */
+function installedVersionOf(spec: string): string | null {
+  if (!spec || /^(file:|link:|github:|git\+|workspace:)/.test(spec)) return null;
+  const m = /^[~^>=<v]*(\d+(?:\.\d+){1,2}(?:[-+][0-9A-Za-z.-]+)?)/.exec(spec.trim());
+  return m ? m[1] : null;
+}
+
+/** 带超时 + 镜像回退的 registry GET */
+async function fetchWithFallback<T>(path: string): Promise<T | null> {
+  for (const base of REGISTRY_BASES) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const r = await fetch(`${base}/${encodeURIComponent(name)}/latest`, { signal: ctrl.signal });
-      if (r.ok) {
-        const d = (await r.json()) as { version?: string };
-        if (d.version) return d.version;
-      }
+      const r = await fetch(`${base}${path}`, { signal: ctrl.signal });
+      if (r.ok) return (await r.json()) as T;
     } catch {
       // 国内网络可能失败，回退 npmmirror
     } finally {
       clearTimeout(timer);
     }
-    return null;
-  };
-  const v = (await tryFetch("https://registry.npmjs.org")) ??
-    (await tryFetch("https://registry.npmmirror.com"));
-  return v ?? "—";
+  }
+  return null;
+}
+
+async function fetchVersion(name: string): Promise<string> {
+  const d = await fetchWithFallback<{ version?: string }>(`/${encodeURIComponent(name)}/latest`);
+  return d?.version ?? "—";
+}
+
+/** 拉取 npm 完整元数据（详情页：版本历史 time / README / 依赖 / 作者），失败返回 null */
+async function fetchNpmMeta(name: string): Promise<NpmMeta | null> {
+  if (metaCache.has(name)) return metaCache.get(name) ?? null;
+  const d = await fetchWithFallback<NpmMeta>(`/${encodeURIComponent(name)}`);
+  metaCache.set(name, d);
+  return d;
+}
+
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export function initPlugins(opts: PluginCenterOptions): void {
@@ -117,6 +173,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     table: $("plugin-table"),
     count: $("plugin-count"),
     loading: $("plugin-loading"),
+    badge: document.getElementById("nav-plugins-badge") as HTMLElement | null,
   };
 
   let categories: CategoryMap = {};
@@ -125,13 +182,87 @@ export function initPlugins(opts: PluginCenterOptions): void {
   let filterText = "";
   let installed: InstalledPlugins = { deps: {}, bundles: [], profile: "" };
   let versions: Record<string, string> = {};
-  try {
-    versions = JSON.parse(localStorage.getItem(VERSION_CACHE_KEY) || "{}") as Record<string, string>;
-  } catch {
-    versions = {};
-  }
 
   const isInstalled = (name: string): boolean => installedNames(installed).includes(name);
+
+  /** 已安装 spec 查找：优先 npm 包名，其次索引名（两源名称可能不一致） */
+  const installedSpecOf = (pkg: string, indexName: string): string | undefined => {
+    const deps = installed.deps || {};
+    return deps[pkg] ?? deps[indexName];
+  };
+
+  /** 是否「可更新」：已安装 npm 包，且最新版本 > 已安装版本 */
+  const isUpdatable = (indexName: string, pkg: string, latest: string | undefined): boolean => {
+    if (!latest || latest === "—") return false;
+    const spec = installedSpecOf(pkg, indexName);
+    if (!spec || !isNpmSpec(spec)) return false;
+    const iv = installedVersionOf(spec);
+    return iv !== null && compareVer(latest, iv) > 0;
+  };
+
+  /** 可更新的已安装插件数量（侧边栏角标） */
+  const countUpdatable = (): number => {
+    let n = 0;
+    for (const name of installedNames(installed)) {
+      const pkg = pkgNameOf(name);
+      const spec = installedSpecOf(pkg, name);
+      if (!spec || !isNpmSpec(spec)) continue;
+      const latest = versions[pkg];
+      if (!latest || latest === "—") continue;
+      const iv = installedVersionOf(spec);
+      if (iv !== null && compareVer(latest, iv) > 0) n++;
+    }
+    return n;
+  };
+
+  /** 侧边栏「插件」按钮角标：可更新数量 */
+  const updateBadge = (): void => {
+    if (!els.badge) return;
+    const n = countUpdatable();
+    els.badge.hidden = n === 0;
+    els.badge.textContent = n > 99 ? "99+" : String(n);
+    els.badge.title = n ? t("plugins.badgeUpdates", { n }) : "";
+  };
+
+  /** 版本/基线缓存落盘（Rust 侧 plugin-cache.json；旧 localStorage 数据一次性迁移后清除） */
+  const persistCache = async (): Promise<void> => {
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(versions)) {
+      if (v && v !== "—") clean[k] = v;
+    }
+    const cache: PluginCache = { versions: clean, updatedAt: new Date().toISOString() };
+    try {
+      await setPluginCache(cache as unknown as Record<string, unknown>);
+    } catch {
+      // 磁盘失败不影响 UI，下次再试
+    }
+    try {
+      localStorage.removeItem(LEGACY_VERSION_KEY);
+      localStorage.removeItem(LEGACY_BASELINE_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  /** 从 Rust 侧加载缓存；为空时迁移旧 localStorage 版本号 */
+  const loadCache = async (): Promise<void> => {
+    try {
+      const cached = (await getPluginCache()) as Partial<PluginCache>;
+      if (cached.versions && typeof cached.versions === "object") {
+        versions = { ...versions, ...cached.versions };
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      const legacy = JSON.parse(localStorage.getItem(LEGACY_VERSION_KEY) || "{}") as Record<string, unknown>;
+      for (const [k, v] of Object.entries(legacy)) {
+        if (typeof v === "string" && v !== "—" && !versions[k]) versions[k] = v;
+      }
+    } catch {
+      /* ignore */
+    }
+  };
 
   async function loadInstalled(): Promise<void> {
     installed = await listInstalled();
@@ -220,6 +351,211 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
+  /** 详情页操作按钮（安装/更新/卸载），与表格行内动作一致 */
+  function appendDetailActions(container: HTMLElement, p: AwesomePlugin): void {
+    const spec = specOf(p);
+    const npm = spec !== null && isNpmSpec(spec);
+    const pkg = spec ? pkgNameOf(spec) : p.name;
+    const installedFlag = isInstalled(p.name);
+    container.innerHTML = "";
+    if (installedFlag) {
+      if (npm) {
+        const up = document.createElement("button");
+        up.className = "install-btn btn-icon";
+        up.innerHTML = iconSvg("upload") + t("plugins.update");
+        up.addEventListener("click", () =>
+          performAction(`${t("plugins.update")} ${pkg}`, ["plugin", "--profile", "web", "update", pkg])
+        );
+        container.appendChild(up);
+      }
+      const rm = document.createElement("button");
+      rm.className = "install-btn btn-icon";
+      rm.innerHTML = iconSvg("trash-2") + t("plugins.remove");
+      rm.addEventListener("click", () =>
+        performAction(`${t("plugins.remove")} ${p.name}`, ["plugin", "--profile", "web", "remove", p.name])
+      );
+      container.appendChild(rm);
+    } else {
+      const inst = document.createElement("button");
+      inst.className = "install-btn btn-icon";
+      inst.innerHTML = iconSvg("download") + t("plugins.install");
+      inst.addEventListener("click", () =>
+        performAction(`${t("plugins.install")} ${spec ?? p.name}`, ["plugin", "--profile", "web", "add", spec ?? p.name])
+      );
+      container.appendChild(inst);
+    }
+  }
+
+  /** 行内详情：版本历史（npm time）/ 依赖 / README / 作者 / 许可证 */
+  async function renderNpmDetail(body: HTMLElement, pkg: string): Promise<void> {
+    const meta = await fetchNpmMeta(pkg);
+    if (!meta) {
+      body.innerHTML = `<div class="detail-note">${escHtml(t("plugins.detail.fail"))}</div>`;
+      return;
+    }
+    const latest = meta["dist-tags"]?.latest ?? "";
+    const author = typeof meta.author === "string" ? meta.author : meta.author?.name ?? "—";
+    const license = meta.license ?? "—";
+    const updated = (latest && meta.time?.[latest]) || meta.time?.modified || "";
+
+    // 版本历史：time 中确属 versions 的键，按时间倒序取前 10
+    const history: Array<[string, string]> = [];
+    if (meta.time && meta.versions) {
+      for (const [v, ts] of Object.entries(meta.time)) {
+        if (meta.versions[v] && ts) history.push([v, ts]);
+      }
+      history.sort((a, b) => (a[1] < b[1] ? 1 : -1));
+    }
+
+    const deps = latest ? meta.versions?.[latest]?.dependencies : undefined;
+    const depNames = deps ? Object.keys(deps) : [];
+    const fmt = (ts: string): string => (ts ? ts.slice(0, 10) : "—");
+
+    let html = "";
+    html += `<div class="detail-grid">`;
+    html += `<div class="detail-kv"><span>${escHtml(t("plugins.detail.latest"))}</span><b>${escHtml(latest || "—")}</b></div>`;
+    html += `<div class="detail-kv"><span>${escHtml(t("plugins.detail.author"))}</span><b>${escHtml(author)}</b></div>`;
+    html += `<div class="detail-kv"><span>${escHtml(t("plugins.detail.license"))}</span><b>${escHtml(license)}</b></div>`;
+    html += `<div class="detail-kv"><span>${escHtml(t("plugins.detail.updated"))}</span><b>${escHtml(fmt(updated))}</b></div>`;
+    html += `</div>`;
+
+    html += `<div class="detail-section"><span class="detail-section-title">${escHtml(t("plugins.detail.versionHistory"))}</span><div class="detail-versions">`;
+    if (history.length) {
+      for (const [v, ts] of history.slice(0, 10)) {
+        const cur = v === latest ? " current" : "";
+        html += `<span class="ver-chip${cur}" title="${escHtml(fmt(ts))}">${escHtml(v)}</span>`;
+      }
+      if (history.length > 10) html += `<span class="ver-more">+${history.length - 10}</span>`;
+    } else {
+      html += `<span class="detail-note">${escHtml(t("plugins.detail.noHistory"))}</span>`;
+    }
+    html += `</div></div>`;
+
+    html += `<div class="detail-section"><span class="detail-section-title">${escHtml(t("plugins.detail.deps"))}</span><div class="detail-deps">`;
+    if (depNames.length) {
+      for (const d of depNames.slice(0, 20)) {
+        html += `<code class="dep-chip">${escHtml(d)}<i>@${escHtml(deps?.[d] ?? "")}</i></code>`;
+      }
+      if (depNames.length > 20) html += `<span class="ver-more">+${depNames.length - 20}</span>`;
+    } else {
+      html += `<span class="detail-note">${escHtml(t("plugins.detail.noDeps"))}</span>`;
+    }
+    html += `</div></div>`;
+
+    body.innerHTML = html;
+
+    // README 可能含任意内容 → 一律 textContent 渲染，滚动容器限高
+    const readme = meta.readme?.trim();
+    const sec = document.createElement("div");
+    sec.className = "detail-section";
+    const title = document.createElement("span");
+    title.className = "detail-section-title";
+    title.textContent = t("plugins.detail.readme");
+    sec.appendChild(title);
+    const box = document.createElement("div");
+    box.className = "detail-readme";
+    if (readme) {
+      box.textContent = readme;
+    } else {
+      box.textContent = t("plugins.detail.noReadme");
+      box.classList.add("empty");
+    }
+    sec.appendChild(box);
+    body.appendChild(sec);
+  }
+
+  /** 展开/收起行内详情（单页无路由：点击插件行切换） */
+  function toggleDetail(tr: HTMLTableRowElement, p: AwesomePlugin): void {
+    const existing = tr.nextElementSibling;
+    if (existing && existing.classList.contains("plugin-detail-row")) {
+      existing.remove();
+      tr.classList.remove("open");
+      return;
+    }
+    // 收起其它已展开行
+    els.tbody.querySelectorAll<HTMLTableRowElement>(".plugin-detail-row").forEach((r) => r.remove());
+    els.tbody.querySelectorAll<HTMLTableRowElement>("tr.open").forEach((r) => r.classList.remove("open"));
+
+    const spec = specOf(p);
+    const npm = spec !== null && isNpmSpec(spec);
+    const pkg = spec ? pkgNameOf(spec) : null;
+
+    const detailTr = document.createElement("tr");
+    detailTr.className = "plugin-detail-row";
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "plugin-detail-td";
+
+    const box = document.createElement("div");
+    box.className = "plugin-detail";
+
+    const head = document.createElement("div");
+    head.className = "detail-head";
+    const nameEl = document.createElement("span");
+    nameEl.className = "detail-name";
+    nameEl.textContent = p.name;
+    head.appendChild(nameEl);
+    const catEl = document.createElement("span");
+    catEl.className = "tag latest";
+    catEl.textContent = p.category || "—";
+    head.appendChild(catEl);
+    if (p.url) {
+      const link = document.createElement("a");
+      link.className = "detail-link";
+      link.href = p.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = p.url;
+      head.appendChild(link);
+    }
+    const actions = document.createElement("span");
+    actions.className = "detail-actions";
+    head.appendChild(actions);
+
+    const meta = document.createElement("div");
+    meta.className = "detail-meta";
+    const desc = p.description?.zh || p.description?.en || "";
+    const descEl = document.createElement("div");
+    descEl.className = "detail-desc";
+    descEl.textContent = desc;
+    meta.appendChild(descEl);
+    if (spec) {
+      const specRow = document.createElement("div");
+      specRow.className = "detail-spec";
+      const lbl = document.createElement("span");
+      lbl.textContent = t("plugins.detail.installSpec");
+      const code = document.createElement("code");
+      code.textContent = spec;
+      specRow.appendChild(lbl);
+      specRow.appendChild(code);
+      meta.appendChild(specRow);
+    }
+
+    const body = document.createElement("div");
+    body.className = "detail-body";
+
+    box.appendChild(head);
+    box.appendChild(meta);
+    box.appendChild(body);
+    td.appendChild(box);
+    detailTr.appendChild(td);
+
+    tr.classList.add("open");
+    tr.after(detailTr);
+
+    appendDetailActions(actions, p);
+
+    if (npm && pkg) {
+      body.textContent = t("plugins.detail.loading");
+      void renderNpmDetail(body, pkg);
+    } else {
+      const note = document.createElement("div");
+      note.className = "detail-note";
+      note.textContent = t("plugins.detail.nonNpm", { spec: spec ?? "—" });
+      body.appendChild(note);
+    }
+  }
+
   function renderTable(): void {
     const rows = filtered();
     els.count.textContent = String(rows.length);
@@ -232,17 +568,13 @@ export function initPlugins(opts: PluginCenterOptions): void {
     rows.forEach((p) => {
       const spec = specOf(p);
       const npm = spec !== null && isNpmSpec(spec);
-      const ver = npm && versions[pkgNameOf(spec)] ? versions[pkgNameOf(spec)] : "—";
+      const pkg = spec ? pkgNameOf(spec) : p.name;
+      const ver = npm && versions[pkg] ? versions[pkg] : "—";
       const installedFlag = isInstalled(p.name);
-      const baseline = JSON.parse(localStorage.getItem(BASELINE_KEY) || "{}") as Record<string, string>;
-      const prev = baseline[p.name];
-      const updatable = installedFlag && npm && ver !== "—" && prev && compareVer(ver, prev) > 0;
-
-      const esc = (s: string): string =>
-        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      const updatable = isUpdatable(p.name, pkg, versions[pkg]);
 
       // 非 npm 源（github: 等）没有 npm 版本号，版本列给个弱标签说明来源
-      let verHtml = esc(ver);
+      let verHtml = escHtml(ver);
       if (!npm && spec) {
         const srcTag = spec.startsWith("github:") ? "github" : "git";
         verHtml = `<span class="ver-src">${srcTag}</span>`;
@@ -257,19 +589,21 @@ export function initPlugins(opts: PluginCenterOptions): void {
       if (installedFlag) {
         actionsHtml =
           (npm
-            ? `<button class="install-btn btn-icon" data-act="update" data-spec="${esc(pkgNameOf(spec!))}">${iconSvg("upload")}${t("plugins.update")}</button> `
+            ? `<button class="install-btn btn-icon" data-act="update" data-spec="${escHtml(pkg)}">${iconSvg("upload")}${t("plugins.update")}</button> `
             : "") +
-          `<button class="install-btn btn-icon" data-act="remove" data-name="${esc(p.name)}">${iconSvg("trash-2")}${t("plugins.remove")}</button>`;
+          `<button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}">${iconSvg("trash-2")}${t("plugins.remove")}</button>`;
       } else {
-        actionsHtml = `<button class="install-btn btn-icon" data-act="install" data-spec="${esc(spec ?? p.name)}">${iconSvg("download")}${t("plugins.install")}</button>`;
+        actionsHtml = `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(spec ?? p.name)}">${iconSvg("download")}${t("plugins.install")}</button>`;
       }
 
       const tr = document.createElement("tr");
+      tr.className = "plugin-row";
+      tr.title = t("plugins.detail.hint");
       tr.innerHTML = `
-        <td class="pkg"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a></td>
+        <td class="pkg"><a href="${escHtml(p.url)}" target="_blank" rel="noopener">${escHtml(p.name)}</a></td>
         <td class="ver">${verHtml}</td>
         <td>${tagHtml}</td>
-        <td class="desc">${esc(p.description?.zh ?? p.description?.en ?? "—")}</td>
+        <td class="desc">${escHtml(p.description?.zh ?? p.description?.en ?? "—")}</td>
         <td style="text-align:right;">${actionsHtml}</td>`;
       tr.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) => {
         b.addEventListener("click", () => {
@@ -278,6 +612,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
           else if (act === "update") performAction(`${t("plugins.update")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "update", b.dataset.spec!]);
           else if (act === "remove") performAction(`${t("plugins.remove")} ${b.dataset.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name!]);
         });
+      });
+      // 点击行（非链接/按钮区域）展开详情
+      tr.addEventListener("click", (ev) => {
+        const target = ev.target as HTMLElement;
+        if (target.closest("a, button, [data-act]")) return;
+        toggleDetail(tr, p);
       });
       els.tbody.appendChild(tr);
     });
@@ -296,9 +636,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
     await loadInstalled();
     renderOfficial();
     renderTable();
+    updateBadge();
   }
 
-  /** 拉取 npm 版本（并发池，结果缓存到 localStorage；失败的 "—" 不缓存，下次刷新重试） */
+  /** 拉取 npm 版本（并发池，结果缓存到 Rust 侧；失败的 "—" 不缓存，下次刷新重试） */
   async function refreshVersions(): Promise<void> {
     const tasks = plugins
       .map((p) => specOf(p))
@@ -312,34 +653,35 @@ export function initPlugins(opts: PluginCenterOptions): void {
       while (i < unique.length) {
         const name = unique[i++];
         versions[name] = await fetchVersion(name);
-        if (i % 20 === 0) persistVersions();
+        if (i % 20 === 0) void persistCache();
       }
     };
     await Promise.all(Array.from({ length: Math.min(pool, unique.length) }, () => worker()));
-    persistVersions();
+    await persistCache();
   }
 
-  function persistVersions(): void {
-    try {
-      // 只缓存真实版本号，"—"（失败）不落盘，保证下次刷新会重试
-      const clean: Record<string, string> = {};
-      for (const [k, v] of Object.entries(versions)) {
-        if (v && v !== "—") clean[k] = v;
+  /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺（启动用，秒级）；force=true 强制刷新（定时用） */
+  async function checkInstalledUpdates(force: boolean): Promise<void> {
+    const names = [
+      ...new Set(
+        installedNames(installed)
+          .map((n) => installedSpecOf(pkgNameOf(n), n))
+          .filter((s): s is string => !!s && isNpmSpec(s))
+          .map(pkgNameOf)
+      ),
+    ];
+    const todo = force ? names : names.filter((n) => !versions[n] || versions[n] === "—");
+    if (!todo.length) return;
+    let i = 0;
+    const pool = 3;
+    const worker = async (): Promise<void> => {
+      while (i < todo.length) {
+        const name = todo[i++];
+        versions[name] = await fetchVersion(name);
       }
-      localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify(clean));
-      // 更新基线：记录本次看到的最新版本，下次对比出「可更新」
-      const baseline: Record<string, string> = {};
-      plugins.forEach((p) => {
-        const spec = specOf(p);
-        if (spec && isNpmSpec(spec)) {
-          const v = versions[pkgNameOf(spec)];
-          if (v && v !== "—") baseline[p.name] = v;
-        }
-      });
-      localStorage.setItem(BASELINE_KEY, JSON.stringify(baseline));
-    } catch {
-      // ignore
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(pool, todo.length) }, () => worker()));
+    await persistCache();
   }
 
   async function refreshIndex(): Promise<void> {
@@ -364,6 +706,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     await loadInstalled();
     renderOfficial();
     renderTable();
+    updateBadge();
     els.refresh.disabled = false;
     els.refreshLabel.textContent = t("plugins.refresh");
   }
@@ -381,11 +724,22 @@ export function initPlugins(opts: PluginCenterOptions): void {
     renderCategories();
     renderOfficial();
     renderTable();
+    updateBadge();
   });
 
-  // 初始加载
-  void loadInstalled().then(() => {
+  // 初始加载：缓存（Rust 侧）→ 已安装 → 索引 → 启动静默更新检查 + 每 6h 定时检查
+  void (async () => {
+    await loadCache();
+    await loadInstalled();
     renderOfficial();
     void refreshIndex();
-  });
+    await checkInstalledUpdates(false);
+    updateBadge();
+    window.setInterval(() => {
+      void checkInstalledUpdates(true).then(() => {
+        updateBadge();
+        if (document.getElementById("view-plugins")?.classList.contains("active")) renderTable();
+      });
+    }, UPDATE_CHECK_INTERVAL_MS);
+  })();
 }

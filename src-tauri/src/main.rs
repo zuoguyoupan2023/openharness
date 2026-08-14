@@ -1180,6 +1180,44 @@ async fn run_dsh_cmd(app: AppHandle, args: Vec<String>) -> Result<String, String
     Ok("✅ 命令执行完毕".into())
 }
 
+// ============================ 插件缓存落盘（$APP_DATA/plugin-cache.json） ============================
+// P0「缓存落盘升级」：插件中心的版本号/基线等从 localStorage 升级为 Rust 侧 JSON 文件。
+// 通用 JSON blob 设计：当前存 versions/updatedAt，006 计划的「索引快照缓存」可复用同一文件。
+
+fn plugin_cache_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("❌ 无法获取应用数据目录: {}", e))?;
+    Ok(dir.join("plugin-cache.json"))
+}
+
+/// 读取插件缓存（缺失/损坏时返回空对象，不报错）
+#[tauri::command]
+fn get_plugin_cache(app: AppHandle) -> serde_json::Value {
+    let Ok(p) = plugin_cache_path(&app) else {
+        return serde_json::json!({});
+    };
+    std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// 写入插件缓存（原子替换：先写临时文件再改名，避免中断写坏）
+#[tauri::command]
+fn set_plugin_cache(app: AppHandle, cache: serde_json::Value) -> Result<(), String> {
+    let p = plugin_cache_path(&app)?;
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("❌ 无法创建数据目录: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(&cache)
+        .map_err(|e| format!("❌ 序列化插件缓存失败: {}", e))?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, &json).map_err(|e| format!("❌ 无法写入插件缓存: {}", e))?;
+    std::fs::rename(&tmp, &p).map_err(|e| format!("❌ 无法写入插件缓存: {}", e))
+}
+
 /// 读取 web profile 的已安装插件（dependencies + bundles）
 #[tauri::command]
 fn list_installed_plugins() -> Result<serde_json::Value, String> {
@@ -1227,6 +1265,8 @@ fn main() {
             restart_dsh,
             run_dsh_cmd,
             list_installed_plugins,
+            get_plugin_cache,
+            set_plugin_cache,
             get_settings,
             set_registry,
             set_close_with_app,
