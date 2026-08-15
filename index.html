@@ -285,15 +285,16 @@
       100% { opacity: 0.4; transform: scale(0.9); }
     }
 
-    /* 侧边栏底部快捷操作（主题 / 语言） */
+    /* 侧边栏底部快捷操作（五角星 / 明暗 / 语言）：纵向三行 */
     .foot-actions {
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      align-items: stretch;
       gap: 6px;
     }
-    #sidebar.collapsed .foot-actions { flex-direction: column; }
+    #sidebar.collapsed .foot-actions { align-items: center; }
     .foot-btn {
-      flex: 1;
+      width: 100%;
       display: inline-flex;
       align-items: center;
       justify-content: center;

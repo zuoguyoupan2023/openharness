@@ -27,6 +27,7 @@ import {
 import { mountIcons, iconSvg } from "./icons";
 import { initLang, setLang, getLang, t } from "./i18n";
 import { initTheme, cycleTheme, effectiveTheme } from "./theme";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -143,8 +144,8 @@ const REFERRAL_URL = "https://opencode.ai/go?ref=3Y4AMWZX88";
 function initReferral(): void {
   const btn = document.getElementById("referral-toggle");
   btn?.addEventListener("click", () => {
-    // 主窗口 webview 未拦截 window.open：_blank 将在系统默认浏览器打开，避免占用应用内标签
-    window.open(REFERRAL_URL, "_blank", "noopener");
+    // 用 opener 插件在系统默认浏览器打开（Tauri 主 WebView 内 window.open 不可靠）
+    void openUrl(REFERRAL_URL);
   });
 }
 

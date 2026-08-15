@@ -1550,6 +1550,7 @@ fn main() {
         .manage(Shells(tokio::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(WebviewRegistry(Mutex::new(HashMap::new())))
         .manage(NodeBusy(Mutex::new(false)))
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,

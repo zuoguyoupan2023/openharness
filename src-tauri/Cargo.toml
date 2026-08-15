@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 # unstable：启用 Window::add_child 等运行时子 webview API（官方 multiwebview 示例同样依赖）
 tauri = { version = "2", features = ["protocol-asset", "unstable"] }
 tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 关键：添加 tokio 用于异步子进程管理
