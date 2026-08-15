@@ -1,0 +1,10 @@
+# openharness-voice bundle patch —— applied after dsh-base / dsh-web-app.
+-- insert:
+    - id: openharness-voice
+      name: 'openharness-voice'
+      inject: ['connection']
+      config:
+        enabled: true
+        # 云 STT/TTS provider（V1 仅 azure）。
+        provider: 'azure'
+        language: 'zh-CN'
