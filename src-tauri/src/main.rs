@@ -240,7 +240,8 @@ async fn dsh_settings_set(ns: String, value: String) -> Result<(), String> {
 /// WS 断开后自动重连（DSH 重启 / 未就绪时每 2s 重试），常驻后台运行。
 fn spawn_dsh_settings_events(app: AppHandle) {
     const DSH_EVENTS_WS: &str = "ws://127.0.0.1:3080/api/events.host";
-    tokio::spawn(async move {
+    // 用 Tauri 托管的 async runtime 派发，不依赖"调用线程是否进入全局 tokio context"
+    tauri::async_runtime::spawn(async move {
         loop {
             match tokio_tungstenite::connect_async(DSH_EVENTS_WS).await {
                 Ok((mut ws, _)) => {
@@ -282,8 +283,9 @@ fn spawn_dsh_settings_events(app: AppHandle) {
 }
 
 /// 启动 DSH 设置事件订阅（由前端在 DSH 就绪后调用；内部常驻重连）
+/// 必须为 async：`tokio::spawn` 需要在 Tokio runtime 上下文内执行，Tauri 的 async 命令运行在其自带 runtime 上。
 #[tauri::command]
-fn dsh_settings_subscribe(app: AppHandle) {
+async fn dsh_settings_subscribe(app: AppHandle) {
     spawn_dsh_settings_events(app);
 }
 
