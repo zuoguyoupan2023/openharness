@@ -75,6 +75,19 @@ const DICT: Record<string, Entry> = {
     zh: "（进程已退出，代码 {code}）",
     en: "(process exited, code {code})",
   },
+  "agent.title": { zh: "启动智能体", en: "Launch agent" },
+  "agent.menu.head": { zh: "智能体", en: "Agents" },
+  "agent.installed": { zh: "已装", en: "OK" },
+  "agent.notInstalled": { zh: "未装", en: "Not installed" },
+  "agent.empty": { zh: "（正在检测…）", en: "(detecting…)" },
+  "agent.foot": {
+    zh: "点「已装」直接在新终端启动；未安装的暂不支持自动安装（规划中）",
+    en: "Click an installed agent to launch it in a new terminal; installing missing ones is planned.",
+  },
+  "agent.launchFail": {
+    zh: "❌ 启动智能体失败：{err}",
+    en: "❌ Failed to launch agent: {err}",
+  },
 
   // ===== 推荐链接（侧边栏底部角落，低调不打扰）=====
   "referral.title": {

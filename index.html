@@ -566,6 +566,72 @@
     }
     .logs-clear:hover { background: var(--hover); color: var(--text); }
 
+    /* 智能体启动器 */
+    .agent-wrap { position: relative; flex: 0 0 auto; display: inline-flex; }
+    .agent-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      margin-left: 4px;
+    }
+    .agent-btn:hover { background: var(--hover); color: var(--text); }
+    .agent-menu {
+      position: absolute;
+      top: 36px;
+      right: 0;
+      z-index: 60;
+      min-width: 240px;
+      max-width: 320px;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      padding: 6px;
+    }
+    .agent-menu-head {
+      font-size: 0.75rem;
+      color: var(--text-faint);
+      padding: 6px 8px 4px;
+    }
+    .agent-menu-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+    .agent-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      font-size: 0.85rem;
+    }
+    .agent-item:hover { background: var(--hover); }
+    .agent-item:disabled { opacity: 0.5; cursor: default; }
+    .agent-item:disabled:hover { background: transparent; }
+    .agent-item .ag-icon { width: 18px; text-align: center; flex: 0 0 auto; }
+    .agent-item .ag-name { flex: 1 1 auto; font-weight: 600; }
+    .agent-item .ag-state {
+      font-size: 0.7rem;
+      color: var(--text-faint);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      padding: 1px 8px;
+    }
+    .agent-item .ag-state.ok { color: var(--accent, #4ade80); border-color: currentColor; }
+    .agent-item .ag-state.no { color: var(--text-faint); }
+    .agent-menu-foot { padding: 6px 8px 2px; font-size: 0.7rem; color: var(--text-faint); }
+
     /* 终端窗格栈：同一时刻只显示激活的那个 */
     .term-stack {
       flex: 1;
@@ -1135,6 +1201,16 @@
         <button class="term-add" id="term-add" data-i18n-title="term.add" aria-label="新增终端">
           <i data-icon="plus"></i>
         </button>
+        <div class="agent-wrap">
+          <button class="agent-btn" id="agent-btn" data-i18n-title="agent.title" aria-label="智能体">
+            <i data-icon="terminal"></i>
+          </button>
+          <div class="agent-menu" id="agent-menu" hidden>
+            <div class="agent-menu-head" id="agent-menu-head">智能体</div>
+            <div class="agent-menu-list" id="agent-menu-list"></div>
+            <div class="agent-menu-foot" id="agent-menu-foot"></div>
+          </div>
+        </div>
         <button class="logs-clear" id="logs-clear" data-i18n-title="term.clearLog">清空</button>
       </div>
       <div class="term-stack" id="term-stack"></div>

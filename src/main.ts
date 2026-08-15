@@ -9,6 +9,8 @@ import {
   termWrite,
   termResize,
   termKill,
+  agentList,
+  agentSpawn,
   onTermOutput,
   onTermExit,
 } from "./dsh";
@@ -33,6 +35,16 @@ import { startDshSettingsSync, pushPref } from "./dsh-settings";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
+}
+
+/** 简单 HTML 转义（避免把用户/工具名拼进 innerHTML 时注入） */
+function escHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** 模块级引用：switchView 切换视图时联动原生 webview 显隐 */
@@ -149,6 +161,78 @@ function initTerminalPanel(): void {
     const act = terms?.getActive();
     if (act) terms?.clear(act);
   });
+
+  initAgentLauncher();
+}
+
+// ===== 智能体启动器（L1：检测 + 一键启动）=====
+function initAgentLauncher(): void {
+  const btn = $("agent-btn");
+  const menu = $("agent-menu");
+  const list = $("agent-menu-list");
+  const foot = $("agent-menu-foot");
+
+  // 关闭其它区域的点击穿透
+  const close = () => menu.hidden = true;
+  document.addEventListener("click", (ev) => {
+    if (!menu.hidden && !(menu as any).contains(ev.target) && ev.target !== btn) close();
+  });
+
+  btn.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const showing = !menu.hidden;
+    close();
+    if (showing) return;
+    menu.hidden = false;
+    foot.textContent = t("agent.foot");
+    list.innerHTML = `<div class="agent-item" style="cursor:default">${t("agent.empty")}</div>`;
+    try {
+      const agents = await agentList();
+      renderAgents(list, agents);
+    } catch (e) {
+      list.innerHTML = `<div class="agent-item" style="cursor:default;color:var(--text-faint)">${String(e)}</div>`;
+    }
+  });
+}
+
+function renderAgents(list: HTMLElement, agents: import("./dsh").AgentInfo[]): void {
+  list.innerHTML = "";
+  if (!agents.length) {
+    list.innerHTML = `<div class="agent-item" style="cursor:default;color:var(--text-faint)">—</div>`;
+    return;
+  }
+  for (const a of agents) {
+    const item = document.createElement("button");
+    item.className = "agent-item";
+    item.disabled = !a.installed;
+    item.setAttribute("title", a.path || a.name);
+    const stateCls = a.installed ? "ok" : "no";
+    const stateText = a.installed ? t("agent.installed") : t("agent.notInstalled");
+    item.innerHTML =
+      `<span class="ag-icon">${iconSvg("terminal")}</span>` +
+      `<span class="ag-name">${escHtml(a.name)}</span>` +
+      `<span class="ag-state ${stateCls}">${escHtml(stateText)}</span>`;
+    if (a.installed) {
+      item.addEventListener("click", () => void launchAgent(a));
+    }
+    list.appendChild(item);
+  }
+}
+
+async function launchAgent(a: import("./dsh").AgentInfo): Promise<void> {
+  const id = terms?.nextShellId() ?? `agent-${Date.now()}`;
+  // 智能体终端：带关闭按钮，标签名直接用命令名
+  terms?.newShell(id, a.name);
+  $("#agent-menu").hidden = true;
+  const { rows, cols } = terms?.getSize(id) ?? { rows: 24, cols: 80 };
+  try {
+    appendLog(await agentSpawn(id, rows, cols, a.key));
+  } catch (e) {
+    terms?.feed(id, t("agent.launchFail", { err: String(e) }) + "\r\n");
+    terms?.markExited(id, "");
+    terms?.closeShell(id);
+    appendLog(t("agent.launchFail", { err: String(e) }));
+  }
 }
 
 // ===== 推荐链接（侧边栏底部角落，低调）=====

@@ -81,6 +81,25 @@ export function termKill(id: string): Promise<void> {
   return invoke<void>("term_kill", { id });
 }
 
+// ===== 智能体启动器（L1：检测 + 一键启动）=====
+
+export interface AgentInfo {
+  key: string;
+  name: string;
+  installed: boolean;
+  path: string;
+}
+
+/** 检测所有已知智能体是否已安装 */
+export function agentList(): Promise<AgentInfo[]> {
+  return invoke<AgentInfo[]>("agent_list");
+}
+
+/** 一键启动某个已安装的智能体（在独立 PTY 里直接运行其 CLI） */
+export function agentSpawn(id: string, rows: number, cols: number, agent: string): Promise<string> {
+  return invoke<string>("agent_spawn", { id, rows, cols, agent });
+}
+
 export interface TermOutput {
   id: string;
   data: string;

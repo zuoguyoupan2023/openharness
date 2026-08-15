@@ -1216,7 +1216,7 @@ async fn term_spawn(
     rows: u32,
     cols: u32,
 ) -> Result<String, String> {
-    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use portable_pty::CommandBuilder;
 
     // 同 id 已存在则先清理（幂等）
     kill_shell(&app, &id).await;
@@ -1226,6 +1226,142 @@ async fn term_spawn(
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
     };
+
+    // 从设备侧命令：登录 shell，加载用户环境
+    let mut cmd = CommandBuilder::new(&shell);
+    if cfg!(windows) {
+        cmd.arg("/Q");
+    } else {
+        cmd.arg("-l"); // 登录 shell
+    }
+
+    // 终端集成（仅 zsh）：用临时 ZDOTDIR 注入 precmd 把 PWD 经 OSC title 发出（供标签名显示目录）
+    let mut zdotdir: Option<PathBuf> = None;
+    #[cfg(unix)]
+    if !cfg!(windows)
+        && std::path::Path::new(&shell)
+            .file_name()
+            .map(|f| f == "zsh")
+            .unwrap_or(false)
+    {
+        if let Some(dir) = setup_zsh_integration() {
+            cmd.env("ZDOTDIR", &dir);
+            cmd.env("TERM", "xterm-256color");
+            zdotdir = Some(dir);
+        }
+    }
+
+    spawn_pty_internal(&app, &id, rows, cols, cmd, zdotdir, &shell).await
+}
+
+/// 已知智能体清单（key 唯一；command 为检测命令名，pkg 为其 npm 安装包名，用于 L2 未装即装）。
+const AGENTS: &[(&str, &str, &str)] = &[
+    ("claude", "claude", "@anthropic-ai/claude-code"),
+    ("codex", "codex", "@openai/codex"),
+    ("zcode", "zcode", "@zhipu-ai/zcode"),
+    ("pi", "pi", "@eliot-akira/pi"),
+    ("kimi", "kimi", "kimi-code-cli"),
+];
+
+#[derive(serde::Serialize)]
+struct AgentInfo {
+    key: String,
+    name: String,
+    /// 桌面名（用于 i18n key）。L1 阶段直接用命令名展示。
+    installed: bool,
+    /// 检测到的可执行文件绝对路径；未装为空串
+    path: String,
+}
+
+/// 检测所有已知智能体是否已安装（`command -v`）。每次调用实时检测，避免缓存过期。
+#[tauri::command]
+async fn agent_list() -> Result<Vec<AgentInfo>, String> {
+    let mut out = Vec::new();
+    for (key, command, _pkg) in AGENTS {
+        let path = detect_cmd(command);
+        out.push(AgentInfo {
+            key: (*key).to_string(),
+            name: (*command).to_string(),
+            installed: path.is_some(),
+            path: path.unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
+
+/// 在 PATH 中定位某命令的绝对路径（`command -v` 等价，仅 Unix 语义）。
+fn detect_cmd(name: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let cand = dir.join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let Ok(md) = std::fs::metadata(&cand) {
+                // 可执行文件（含 shebang 脚本）
+                if md.is_file() && md.mode() & 0o111 != 0 {
+                    return Some(cand.display().to_string());
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if cand.exists() {
+                return Some(cand.display().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 一键启动某个智能体：在独立 PTY 里直接运行该 CLI（完全拥有终端，TUI 正常）。
+/// 若该命令未安装则返回错误；前端 L1 应在点它前先据 agent_list 禁用。
+#[tauri::command]
+async fn agent_spawn(
+    app: AppHandle,
+    id: String,
+    rows: u32,
+    cols: u32,
+    agent: String,
+) -> Result<String, String> {
+    use portable_pty::CommandBuilder;
+    // 同 id 已存在则先清理（幂等）
+    kill_shell(&app, &id).await;
+
+    // 找到 agent 定义
+    let def = AGENTS
+        .iter()
+        .find(|(k, _, _)| *k == agent)
+        .ok_or_else(|| format!("未知智能体: {}", agent))?;
+    let (_, command, _) = def;
+
+    // 检测路径并直接调用（不依赖子进程 PATH，避免 GUIFinder PATH 问题）
+    let path = detect_cmd(command)
+        .ok_or_else(|| format!("未安装 {}（command -v 找不到，请先安装）", command))?;
+
+    let mut cmd = CommandBuilder::new(&path);
+    // 继承必要环境（镜像等）——用 apply_registry_env 注入 npm 相关变量以防工具内部需要
+    // PATH 用合并后的 Node 路径，确保工具能调用 node/npx 等
+    let merged_path = node_path_env(&app);
+    cmd.env("PATH", merged_path);
+    cmd.env("TERM", "xterm-256color");
+
+    // 智能体是前台 TUI，无需 zsh precmd（多与目录无关）；直接以该命令为 PTY child
+    spawn_pty_internal(&app, &id, rows, cols, cmd, None, command).await
+}
+
+/// 共享的 PTY 拉起核心：打开 PTY、spawn 给定命令、登记注册表、起读取/等待线程。
+#[allow(clippy::too_many_arguments)]
+async fn spawn_pty_internal(
+    app: &AppHandle,
+    id: &str,
+    rows: u32,
+    cols: u32,
+    cmd: portable_pty::CommandBuilder,
+    zdotdir: Option<PathBuf>,
+    label: &str,
+) -> Result<String, String> {
+    use portable_pty::{native_pty_system, PtySize};
 
     // 每个终端分配独立 PTY（伪终端主/从对）。
     let pty_system = native_pty_system();
@@ -1239,35 +1375,9 @@ async fn term_spawn(
         .map_err(|e| format!("❌ 创建 PTY 失败: {}", e))?;
     let (master, slave) = (pair.master, pair.slave);
 
-    // 从设备侧命令：登录 shell，加载用户环境
-    let mut cmd = CommandBuilder::new(&shell);
-    if cfg!(windows) {
-        cmd.arg("/Q");
-    } else {
-        cmd.arg("-l"); // 登录 shell
-    }
-
-    // 终端集成（仅 zsh）：用临时 ZDOTDIR 注入 precmd，把当前 PWD 经 OSC 0 title 发出，
-    // 前端 xterm.onTitleChange 据此把标签名更新为当前目录。先 source 用户原配置再追加，
-    // 避免破坏既有 prompt/别名。其它 shell（bash/fish 等）不加集成，保持原样可用。
-    let mut zdotdir: Option<PathBuf> = None;
-    #[cfg(unix)]
-    if !cfg!(windows)
-        && Path::new(&shell)
-            .file_name()
-            .map(|f| f == "zsh")
-            .unwrap_or(false)
-    {
-        if let Some(dir) = setup_zsh_integration() {
-            cmd.env("ZDOTDIR", &dir);
-            cmd.env("TERM", "xterm-256color");
-            zdotdir = Some(dir);
-        }
-    }
-
     let mut child = slave
         .spawn_command(cmd)
-        .map_err(|e| format!("❌ 启动 shell 失败 ({}): {}", shell, e))?;
+        .map_err(|e| format!("❌ 启动失败 ({}): {}", label, e))?;
     let pid = child.process_id().unwrap_or(0);
 
     // 取主设备读写端：reader 原样转发输出字节流；writer 供 term_write 写输入。
@@ -1283,7 +1393,7 @@ async fn term_spawn(
         let state = app.state::<Shells>();
         let mut all = state.0.lock().await;
         all.insert(
-            id.clone(),
+            id.to_string(),
             ShellEntry {
                 writer: std::sync::Mutex::new(writer),
                 master: std::sync::Mutex::new(master),
@@ -1293,7 +1403,7 @@ async fn term_spawn(
     }
 
     // 读取 + 等待任务：阻塞线程里逐块读 PTY 主设备，原样 emit（不做按行拆，保留全部控制序列）
-    let id_out = id.clone();
+    let id_out = id.to_string();
     let app_out = app.clone();
     let zdot_cleanup = zdotdir;
     std::thread::spawn(move || {
@@ -1328,7 +1438,7 @@ async fn term_spawn(
         }
     });
 
-    Ok(format!("✅ 终端 {} 已启动 ({})", id, shell))
+    Ok(format!("✅ {} 已启动 (pid={})", label, pid))
 }
 
 /// 向指定 shell 终端的 PTY 主设备写入片段（终端输入 → shell）
@@ -1807,6 +1917,8 @@ fn main() {
             term_write,
             term_resize,
             term_kill,
+            agent_list,
+            agent_spawn,
             list_installed_plugins,
             get_plugin_cache,
             set_plugin_cache,
