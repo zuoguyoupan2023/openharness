@@ -234,6 +234,58 @@ async fn dsh_settings_set(ns: String, value: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 后台任务：订阅 DSH web 的设置变更事件流，实时向 Tauri 前端同步。
+/// 通过 WebSocket 连接 DSH 的 /api/events.host（回环地址放行、无需鉴权），
+/// 收到 `settings/document-updated` 帧时 emit "dsh-settings-event"（参数 = 设置命名空间 ns）。
+/// WS 断开后自动重连（DSH 重启 / 未就绪时每 2s 重试），常驻后台运行。
+fn spawn_dsh_settings_events(app: AppHandle) {
+    const DSH_EVENTS_WS: &str = "ws://127.0.0.1:3080/api/events.host";
+    tokio::spawn(async move {
+        loop {
+            match tokio_tungstenite::connect_async(DSH_EVENTS_WS).await {
+                Ok((mut ws, _)) => {
+                    loop {
+                        match ws.next().await {
+                            // 连接关闭 / 出错：跳出到外层重连
+                            None => break,
+                            Some(Err(_)) => break,
+                            Some(Ok(msg)) => {
+                                let tokio_tungstenite::tungstenite::Message::Text(text) = msg
+                                else {
+                                    continue;
+                                };
+                                if !text.contains("settings/document-updated") {
+                                    continue;
+                                }
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    // 帧结构（server-request 信封）：
+                                    // { type, rpcId, method:"host/remote-event", payload:{ event, args:[ns, revision] } }
+                                    if let Some(ns) = v["payload"]["args"]
+                                        .as_array()
+                                        .and_then(|a| a.first())
+                                        .and_then(|x| x.as_str())
+                                    {
+                                        let _ = app.emit("dsh-settings-event", ns);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[dsh-settings-events] 连接失败: {e}");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
+}
+
+/// 启动 DSH 设置事件订阅（由前端在 DSH 就绪后调用；内部常驻重连）
+#[tauri::command]
+fn dsh_settings_subscribe(app: AppHandle) {
+    spawn_dsh_settings_events(app);
+}
 
 /// 按设置向子进程注入 npm registry 环境变量。
 /// `npm_config_registry` 会级联到 npx（下载 dsh）与 pnpm（`dsh plugin` 内部）的所有子进程。
@@ -1678,6 +1730,7 @@ fn main() {
             set_close_with_app,
             dsh_settings_snapshot,
             dsh_settings_set,
+            dsh_settings_subscribe,
             check_node,
             download_node,
             webview_create,

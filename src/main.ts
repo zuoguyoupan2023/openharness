@@ -233,7 +233,7 @@ async function boot(): Promise<void> {
   initTheme();
 
   // ===== 与 DSH web 的主题 / 语言双向同步（壳 ↔ 3080） =====
-  startDshSettingsSync();
+  void startDshSettingsSync();
 
   window.addEventListener("error", (e) => {
     appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
