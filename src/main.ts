@@ -13,6 +13,7 @@ import {
   agentSpawn,
   onTermOutput,
   onTermExit,
+  onTermInputDebug,
 } from "./dsh";
 import { TabManager } from "./tabs";
 import { initPlugins } from "./plugins";
@@ -137,6 +138,11 @@ function initTerminalPanel(): void {
     if (id !== LOG_TERM_ID) {
       terms?.markExited(id, t("term.exited", { code: data }));
     }
+  });
+
+  // 【调试】把前端收到的每段输入以可见形式打到 DSH 日志终端，排查方向键/escape 是否到达后端
+  onTermInputDebug(({ data }) => {
+    terms?.feedLine(LOG_TERM_ID, "[key] " + data);
   });
 
   // 「+」新增 shell 终端

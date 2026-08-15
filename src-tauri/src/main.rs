@@ -1338,10 +1338,9 @@ fn detect_cmd(name: &str) -> Option<String> {
     None
 }
 
-/// 一键启动某个智能体：先拉起一个「登录 + 交互」shell（复用 shell 终端那一套，环境完整、
-/// PTY/回收都对），再把 agent 命令喂进去，让 CLI 作为 shell 的前台子进程独占终端。
-/// 相比“直接当作 PTY 子进程跑”更稳：GUI 环境很“空”，直接跑 CLI 常因缺路径/环境立刻退出。
-/// 用交互 shell 后，shell（zsh 等）一直存活 → term_write 不会因子进程退出而失败。
+/// 一键启动某个智能体：把 CLI **直接**作为 PTY 子进程拉起（与 shell 终端同一架构——
+/// portable-pty 会让它成为会话 leader + 独占控制终端，termios 由 CLI 自行配置，方向键/escape
+/// 序列能完整送达）。为补全 GUI 的空环境，注入合并后的 PATH（含 nvm/volta/brew 等）与 TERM。
 #[tauri::command]
 async fn agent_spawn(
     app: AppHandle,
@@ -1350,7 +1349,7 @@ async fn agent_spawn(
     cols: u32,
     agent: String,
 ) -> Result<String, String> {
-    use std::io::Write as _;
+    use portable_pty::CommandBuilder;
 
     // 同 id 已存在则先清理（幂等）
     kill_shell(&app, &id).await;
@@ -1364,40 +1363,21 @@ async fn agent_spawn(
     let path = detect_cmd(command)
         .ok_or_else(|| format!("未安装 {}（command -v 找不到，请先安装）", command))?;
 
-    // 复用与 shell 终端相同的登录交互 shell 启动（环境完整）
+    let mut cmd = CommandBuilder::new(&path);
+    // Windows 智能体是 .cmd shim，需经 cmd.exe 执行
     #[cfg(windows)]
-    let (cmd, zdotdir) = {
-        use portable_pty::CommandBuilder;
-        // Windows：spawn 交互式 cmd.exe，再在下方把 agent 的 .cmd shim 喂进 stdin 执行
-        (CommandBuilder::new("cmd.exe"), None)
-    };
-    #[cfg(not(windows))]
-    let (cmd, zdotdir) = build_login_shell_command();
-
-    let shell = if cfg!(windows) {
-        "cmd".to_string()
-    } else {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
-    };
-    spawn_pty_internal(&app, &id, rows, cols, cmd, zdotdir, &shell).await?;
-
-    // shell 起来后，把 agent 命令喂进去执行（带换行回车），CLI 将作为前台 job 接管终端
-    let state = app.state::<Shells>();
-    let all = state.0.lock().await;
-    if let Some(entry) = all.get(&id) {
-        let mut writer = entry.writer.lock().unwrap();
-        // 带引号传入绝对路径，避免路径含空格；Windows .cmd 已在创建时处理
-        let quoted = path.replace('\'', "'\\''");
-        let cmdline = if cfg!(windows) {
-            format!("{}\r", &path) // Windows 下 path 即 .cmd，直接回车执行
-        } else {
-            format!("'{}'\r", quoted)
-        };
-        let _ = writer.write_all(cmdline.as_bytes());
-        let _ = writer.flush();
+    {
+        cmd = CommandBuilder::new("cmd.exe").arg("/C").arg(&path);
     }
+    // 注入合并后的 PATH（内置 Node / nvm / volta / brew / 原 PATH）+ TERM，补 GUI 空环境
+    let merged_path = node_path_env(&app);
+    cmd.env("PATH", merged_path);
+    cmd.env("TERM", "xterm-256color");
+    // claude/codex 等需要正确的 locale
+    cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
 
-    Ok(format!("✅ {} 已启动", command))
+    let (cmd, zdotdir) = (cmd, None);
+    spawn_pty_internal(&app, &id, rows, cols, cmd, zdotdir, command).await
 }
 
 /// 共享的 PTY 拉起核心：打开 PTY、spawn 给定命令、登记注册表、起读取/等待线程。
@@ -1495,6 +1475,20 @@ async fn spawn_pty_internal(
 #[tauri::command]
 async fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String> {
     use std::io::Write as _;
+
+    // 【调试】把收到的输入字节以可见形式回发（用于排查方向键/escape 是否到达后端）。
+    // 通过 term-input-debug 事件；前端可选把它显示到 DSH 日志终端。
+    {
+        let repr = data
+            .escape_debug()
+            .collect::<String>()
+            .replace("\\x1b", "<ESC>");
+        let _ = app.emit("term-input-debug", &ShellData {
+            id: id.clone(),
+            data: repr,
+        });
+    }
+
     let state = app.state::<Shells>();
     let all = state.0.lock().await;
     let Some(entry) = all.get(&id) else {

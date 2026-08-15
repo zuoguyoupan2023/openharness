@@ -42,6 +42,15 @@ export async function initDsh(): Promise<void> {
   await listen<TermOutput>("term-exit", (e) =>
     termExitListeners.forEach((f) => f(e.payload))
   );
+  await listen<TermOutput>("term-input-debug", (e) =>
+    termInputDebugListeners.forEach((f) => f(e.payload))
+  );
+}
+
+export type TermInputDebugListener = (payload: TermOutput) => void;
+const termInputDebugListeners: TermInputDebugListener[] = [];
+export function onTermInputDebug(fn: TermInputDebugListener): void {
+  termInputDebugListeners.push(fn);
 }
 
 export async function startDsh(): Promise<string> {
