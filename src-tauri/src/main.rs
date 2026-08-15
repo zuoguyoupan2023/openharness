@@ -36,9 +36,12 @@ struct DshPid(Mutex<Option<u32>>);
 struct DshStdin(tokio::sync::Mutex<Option<tokio::process::ChildStdin>>);
 
 /// 一个独立的 shell 终端（用户通过「+」新增，跑本机默认 shell）。
-/// stdin 供 term_write 写入；child 所有权交给专门的 wait 任务，线程退出后清理。
+/// 底层是真实 PTY（portable-pty）：writer 用于 term_write 写主设备（-> 子进程输入）、
+/// master 用于 term_resize 同步尺寸，两者都是阻塞的 std Mutex（下有小额写/读，安全）；
+/// pid 用于 kill_shell 兜底回收。master 保留在注册表，保证 PTY 存活、可 resize。
 struct ShellEntry {
-    stdin: tokio::sync::Mutex<tokio::process::ChildStdin>,
+    writer: std::sync::Mutex<Box<dyn std::io::Write + Send>>,
+    master: std::sync::Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     pid: u32,
 }
 /// 全部 shell 终端注册表（key = 终端 id，全 app 唯一）
@@ -1154,10 +1157,20 @@ async fn write_stdin(app: AppHandle, chunk: String) -> Result<String, String> {
 
 // ============================ 多终端（shell 终端 + 只读 DSH 日志终端） ============================
 
-/// 新建一个独立的 shell 终端：spawn 本机默认 shell，stdout/stderr 经 term-output 事件推给前端，
-/// 输入经 term_write 写入其 stdin；退出时发 term-exit 并摘除。
+/// 新建一个独立的 shell 终端：为 shell 分配真正的 PTY（portable-pty），因此支持
+/// vim/htop 等全屏 TUI、stty/tput、行编辑与补全等完整 tty 交互特性。
+/// role：rows/cols 由前端 xterm 实际尺寸传入（打开时首帧 + 之后 resize 用 term_resize 同步）。
+/// 输出（stdout+stderr 合并为 PTY 主设备的原始字节流）经「term-output」事件原样推给前端，
+/// 输入经 term_write 写入主设备；退出时发 term-exit 并摘除。
 #[tauri::command]
-async fn term_spawn(app: AppHandle, id: String) -> Result<String, String> {
+async fn term_spawn(
+    app: AppHandle,
+    id: String,
+    rows: u32,
+    cols: u32,
+) -> Result<String, String> {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
     // 同 id 已存在则先清理（幂等）
     kill_shell(&app, &id).await;
 
@@ -1167,125 +1180,123 @@ async fn term_spawn(app: AppHandle, id: String) -> Result<String, String> {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
     };
 
-    let mut cmd = Command::new(&shell);
+    // 每个终端分配独立 PTY（伪终端主/从对）。
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: rows.clamp(2, u16::MAX as u32) as u16,
+            cols: cols.clamp(2, u16::MAX as u32) as u16,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("❌ 创建 PTY 失败: {}", e))?;
+    let (master, slave) = (pair.master, pair.slave);
+
+    // 从设备侧命令：登录 shell，加载用户环境
+    let mut cmd = CommandBuilder::new(&shell);
     if cfg!(windows) {
         cmd.arg("/Q");
     } else {
-        // 登录 shell，加载用户环境（PATH/别名）
-        cmd.arg("-l");
+        cmd.arg("-l"); // 登录 shell
     }
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd
-        .spawn()
+    let mut child = slave
+        .spawn_command(cmd)
         .map_err(|e| format!("❌ 启动 shell 失败 ({}): {}", shell, e))?;
-    let pid = child.id().unwrap_or(0);
+    let pid = child.process_id().unwrap_or(0);
 
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "❌ 无法获取 shell stdin".to_string())?;
-    let mut stdout = BufReader::new(
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| "❌ 无法获取 shell stdout".to_string())?,
-    );
-    let mut stderr = BufReader::new(
-        child
-            .stderr
-            .take()
-            .ok_or_else(|| "❌ 无法获取 shell stderr".to_string())?,
-    );
+    // 取主设备读写端：reader 原样转发输出字节流；writer 供 term_write 写输入。
+    let mut reader = master
+        .try_clone_reader()
+        .map_err(|e| format!("❌ 获取 PTY 读取端失败: {}", e))?;
+    let writer = master
+        .take_writer()
+        .map_err(|e| format!("❌ 获取 PTY 写入端失败: {}", e))?;
 
-    // stdout 读取任务
-    let id_out = id.clone();
-    let app_out = app.clone();
-    tokio::spawn(async move {
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match stdout.read_until(b'\n', &mut buf).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    let _ = app_out.emit(
-                        "term-output",
-                        &ShellData { id: id_out.clone(), data: String::from_utf8_lossy(&buf).to_string() },
-                    );
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // stderr 读取任务
-    let id_err = id.clone();
-    let app_err = app.clone();
-    tokio::spawn(async move {
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match stderr.read_until(b'\n', &mut buf).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    let _ = app_err.emit(
-                        "term-output",
-                        &ShellData { id: id_err.clone(), data: String::from_utf8_lossy(&buf).to_string() },
-                    );
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // 注册 stdin / pid（缺省，child 所有权交给 wait 任务）
+    // 登记：master 保留在注册表，供 term_resize 同步尺寸，并保证 PTY 存活
     {
         let state = app.state::<Shells>();
         let mut all = state.0.lock().await;
         all.insert(
             id.clone(),
-            ShellEntry { stdin: tokio::sync::Mutex::new(stdin), pid },
+            ShellEntry {
+                writer: std::sync::Mutex::new(writer),
+                master: std::sync::Mutex::new(master),
+                pid,
+            },
         );
     }
 
-    // 退出监听：这个任务独占 child，wait 结束后发 term-exit 并摘除注册表
-    let app_wait = app.clone();
-    let id_wait = id.clone();
-    tokio::spawn(async move {
-        let code = child
+    // 读取 + 等待任务：阻塞线程里逐块读 PTY 主设备，原样 emit（不做按行拆，保留全部控制序列）
+    let id_out = id.clone();
+    let app_out = app.clone();
+    std::thread::spawn(move || {
+        // 用定长数组缓冲：read 按数组长度读；不能用清空的 Vec（len=0 会立即读到 EOF）
+        let mut buf = [0u8; 4096];
+        // 逐块读，直到子进程退出 / PTY 关闭（read 返回 0）
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let _ = app_out.emit(
+                        "term-output",
+                        &ShellData { id: id_out.clone(), data: chunk },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+        // 读循环结束（进程退出 / PTY 关闭）→ 等子进程，拿到退出码并通知前端
+        let code: i32 = child
             .wait()
-            .await
-            .ok()
-            .and_then(|s| s.code())
+            .map(|e: portable_pty::ExitStatus| e.exit_code() as i32)
             .unwrap_or(-1);
-        let _ = app_wait.emit(
+        let _ = app_out.emit(
             "term-exit",
-            &ShellData { id: id_wait.clone(), data: code.to_string() },
+            &ShellData { id: id_out.clone(), data: code.to_string() },
         );
-        kill_shell(&app_wait, &id_wait).await;
     });
 
     Ok(format!("✅ 终端 {} 已启动 ({})", id, shell))
 }
 
-/// 向指定 shell 终端的 stdin 写入片段（终端输入 → shell）
+/// 向指定 shell 终端的 PTY 主设备写入片段（终端输入 → shell）
 #[tauri::command]
 async fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String> {
+    use std::io::Write as _;
     let state = app.state::<Shells>();
     let all = state.0.lock().await;
     let Some(entry) = all.get(&id) else {
         return Err(format!("终端 {} 不存在", id));
     };
-    let mut stdin = entry.stdin.lock().await;
-    stdin
+    let mut writer = entry.writer.lock().unwrap();
+    writer
         .write_all(data.as_bytes())
-        .await
-        .map_err(|e| format!("❌ 写入 shell stdin 失败: {}", e))?;
-    stdin
+        .map_err(|e| format!("❌ 写入 shell PTY 失败: {}", e))?;
+    writer
         .flush()
-        .await
-        .map_err(|e| format!("❌ 刷新 shell stdin 失败: {}", e))?;
+        .map_err(|e| format!("❌ 刷新 shell PTY 失败: {}", e))?;
+    Ok(())
+}
+
+/// 同步某个 shell 终端的窗口尺寸（rows/cols）到 PTY（TIOCSWINSZ），供 vim/top 自适应。
+#[tauri::command]
+async fn term_resize(app: AppHandle, id: String, rows: u32, cols: u32) -> Result<(), String> {
+    use portable_pty::PtySize;
+    let state = app.state::<Shells>();
+    let all = state.0.lock().await;
+    let Some(entry) = all.get(&id) else {
+        return Ok(()); // 终端不存在则静默（幂等）
+    };
+    let master = entry.master.lock().unwrap();
+    master
+        .resize(PtySize {
+            rows: rows.clamp(2, u16::MAX as u32) as u16,
+            cols: cols.clamp(2, u16::MAX as u32) as u16,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("❌ 调整 PTY 尺寸失败: {}", e))?;
     Ok(())
 }
 
@@ -1723,6 +1734,7 @@ fn main() {
             write_stdin,
             term_spawn,
             term_write,
+            term_resize,
             term_kill,
             list_installed_plugins,
             get_plugin_cache,

@@ -8,6 +8,8 @@ import "@xterm/xterm/css/xterm.css";
 export interface TermCallbacks {
   /** 用户在某个 shell 终端输入了一段数据（转发到 shell stdin） */
   onShellInput(id: string, data: string): void;
+  /** shell 终端的实际渲染尺寸变化（rows/cols，行/列）。外层应同步回发 PTY。 */
+  onShellResize(id: string, rows: number, cols: number): void;
   /** 用户点了某个 shell 终端的关闭按钮（外层负责 term_kill + 移除） */
   onCloseShell(id: string): void;
 }
@@ -200,9 +202,25 @@ export class TermManager {
         if (!e || e.dead) return;
         this.cb.onShellInput(id, data);
       });
+      // 尺寸变化（fit / 窗口缩放 / 折叠恢复）→ 回发给 Rust 侧同步 PTY
+      xterm.onResize(({ cols, rows }) => {
+        const e = this.map.get(id);
+        if (!e || e.dead) return;
+        this.cb.onShellResize(id, rows, cols);
+      });
     }
 
     return { id, kind, pane, tab, xterm, fit, dead: false };
+  }
+
+  /** 返回某个终端的当前实际渲染尺寸（行/列），用于初始 spawn PTY 时对齐。 */
+  getSize(id: string): { rows: number; cols: number } {
+    const e = this.map.get(id);
+    if (!e) return { rows: 24, cols: 80 };
+    // xterm 的 buffer 尺寸即为当前可视行列（fit 后即实际）
+    const cols = e.xterm.cols || 80;
+    const rows = e.xterm.rows || 24;
+    return { rows, cols };
   }
 
   private tabTitle(entry: TermEntry, text: string): void {

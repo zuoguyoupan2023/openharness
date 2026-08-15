@@ -28,3 +28,6 @@ tokio-tungstenite = "0.24"
 flate2 = "1"
 tar = "0.4"
 futures-util = "0.3"
+# 真实可用终端：为 shell 子进程分配伪终端（PTY），解锁 vim/htop 等全屏 TUI
+# 取自 WezTerm 作者，跨 Unix/Windows，macOS 走 /dev/ptmx 原生 PTY。
+portable-pty = "0.8"

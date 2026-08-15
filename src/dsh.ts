@@ -64,13 +64,17 @@ export async function writeStdin(chunk: string): Promise<string> {
 
 // ===== 多 shell 终端 =====
 
-/** 新建一个独立 shell 终端（spawn 本机默认 shell）。id 需全局唯一。 */
-export function termSpawn(id: string): Promise<string> {
-  return invoke<string>("term_spawn", { id });
+/** 新建一个独立 shell 终端（提供真实 PTY）。id 需全局唯一；rows/cols 为初始尺寸。 */
+export function termSpawn(id: string, rows: number, cols: number): Promise<string> {
+  return invoke<string>("term_spawn", { id, rows, cols });
 }
 /** 向某个 shell 终端写入输入片段 */
 export function termWrite(id: string, data: string): Promise<void> {
   return invoke<void>("term_write", { id, data });
+}
+/** 同步某个 shell 终端的窗口尺寸到 PTY（供 vim/top 等自适应） */
+export function termResize(id: string, rows: number, cols: number): Promise<void> {
+  return invoke<void>("term_resize", { id, rows, cols });
 }
 /** 关闭某个 shell 终端 */
 export function termKill(id: string): Promise<void> {

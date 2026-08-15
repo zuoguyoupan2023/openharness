@@ -7,6 +7,7 @@ import {
   startDsh,
   termSpawn,
   termWrite,
+  termResize,
   termKill,
   onTermOutput,
   onTermExit,
@@ -84,14 +85,18 @@ async function launch(): Promise<void> {
 // ===== 多终端（DSH 日志只读终端 + 可交互 shell 终端）=====
 function initTerminalPanel(): void {
   terms = new TermManager($("term-stack"), $("term-tabs"), {
-    // shell 终端输入 → 转发到对应 shell 子进程 stdin
+    // shell 终端输入 → 转发到对应 shell 子进程 PTY 主设备
     onShellInput(id, data) {
       void termWrite(id, data).catch(() => {
         terms?.markExited(
           id,
-          "\x1b[31m（写入 shell stdin 失败）\x1b[0m"
+          "\x1b[31m（写入 shell PTY 失败）\x1b[0m"
         );
       });
+    },
+    // shell 终端渲染尺寸变化（含 fit）→ 同步回发 PTY，让 vim/top 自适应
+    onShellResize(id, rows, cols) {
+      void termResize(id, rows, cols).catch(() => {});
     },
     // 关闭按钮 → 杀掉子进程并移除 UI
     onCloseShell(id) {
@@ -122,8 +127,10 @@ function initTerminalPanel(): void {
   $("term-add").addEventListener("click", async () => {
     const id = terms?.nextShellId() ?? `shell-${Date.now()}`;
     terms?.newShell(id, t("term.shell.tab", { n: id.slice(id.indexOf("-") + 1) }));
+    // 用 xterm 实际尺寸作为 PTY 初始尺寸，保证 vim/top 首帧对齐
+    const { rows, cols } = terms?.getSize(id) ?? { rows: 24, cols: 80 };
     try {
-      appendLog(await termSpawn(id));
+      appendLog(await termSpawn(id, rows, cols));
     } catch (e) {
       // spawn 失败：在终端里提示并关闭该标签
       terms?.feed(id, t("term.spawnFail", { err: String(e) }) + "\r\n");
