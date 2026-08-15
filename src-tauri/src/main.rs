@@ -1356,14 +1356,40 @@ async fn agent_spawn(
     let path = detect_cmd(command)
         .ok_or_else(|| format!("未安装 {}（command -v 找不到，请先安装）", command))?;
 
-    let mut cmd = CommandBuilder::new(&path);
-    // 继承必要环境（镜像等）——用 apply_registry_env 注入 npm 相关变量以防工具内部需要
-    // PATH 用合并后的 Node 路径，确保工具能调用 node/npx 等
+    #[cfg(not(windows))]
+    let mut cmd = {
+        // 通过用户的「登录 + 交互」shell 启动智能体：GUI 进程环境很“空”（Finder 启动 PATH 短、
+        // 缺 nvm/volta 等），直接跑 CLI 常因缺路径/环境变量立刻退出。用 `$SHELL -l -i -c 'exec …'`
+        // 先加载用户 .zshenv/.zprofile/.zshrc 等完整登录环境，再 exec 掉 shell 让 CLI 独占 PTY。
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let mut c = CommandBuilder::new(&shell);
+        c.arg("-l");
+        // 交互标志会加载用户 rc（nvm PATH / 别名 / API 相关环境变量）
+        if Path::new(&shell)
+            .file_name()
+            .map(|f| f == "zsh")
+            .unwrap_or(false)
+        {
+            c.arg("-i");
+        }
+        // exec 替换本 shell，claude/codex 等 TUI 完全拥有终端
+        let quoted = path.replace('\'', "'\\''");
+        c.arg("-c");
+        c.arg(format!("exec '{}'", quoted));
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = CommandBuilder::new(&path);
+        c
+    };
+
+    // 注入合并后的 PATH 兜底（含 nvm/volta/brew），并设 TERM
     let merged_path = node_path_env(&app);
     cmd.env("PATH", merged_path);
     cmd.env("TERM", "xterm-256color");
 
-    // 智能体是前台 TUI，无需 zsh precmd（多与目录无关）；直接以该命令为 PTY child
+    // 智能体是前台 TUI，无需 zsh precmd（目录与标题无关）
     spawn_pty_internal(&app, &id, rows, cols, cmd, None, command).await
 }
 
