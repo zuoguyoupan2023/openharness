@@ -1157,6 +1157,53 @@ async fn write_stdin(app: AppHandle, chunk: String) -> Result<String, String> {
 
 // ============================ 多终端（shell 终端 + 只读 DSH 日志终端） ============================
 
+/// 为 zsh 设置终端集成：在临时目录里写一个 ZDOTDIR/.zshrc，先 source 用户原配置，
+/// 再注册 precmd，把当前 PWD 以 OSC 0 title（`\x1b]0;<pwd>\x07`）发出，供前端更新标签名。
+/// 仅用于 zsh；返回临时目录路径（由调用方在终端退出后清理）。失败返回 None（静默跳过）。
+#[cfg(unix)]
+fn setup_zsh_integration() -> Option<PathBuf> {
+    use std::io::Write as _;
+
+    // 用 app 数据目录做根，避免各平台 /tmp 差异；带终端无关标识避免误删他人临时文件
+    let base = std::env::temp_dir().join("oh-term-zdot");
+    let dir = base.join(format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let rc = dir.join(".zshrc");
+    // 先 source 用户原有配置，再叠加集成 hook（保证 PATH/别名/prompt 不丢）
+    let content = r#"# OpenHarness 终端集成（自动生成）
+[[ -e "$HOME/.zshenv" ]] && builtin source "$HOME/.zshenv" 2>/dev/null
+[[ -e "$HOME/.zprofile" ]] && builtin source "$HOME/.zprofile" 2>/dev/null
+[[ -e "$HOME/.zshrc" ]] && builtin source "$HOME/.zshrc" 2>/dev/null
+[[ -e "$HOME/.zlogin" ]] && builtin source "$HOME/.zlogin" 2>/dev/null
+autoload -Uz add-zsh-hook
+_oh_pwd() { print -n "\x1b]0;${PWD}\x07"; }
+add-zsh-hook precmd _oh_pwd
+_oh_pwd
+"#;
+    let mut f = match std::fs::File::create(&rc) {
+        Ok(f) => f,
+        Err(_) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return None;
+        }
+    };
+    if f.write_all(content.as_bytes()).is_err() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    }
+    let _ = f.flush();
+    Some(dir)
+}
+
 /// 新建一个独立的 shell 终端：为 shell 分配真正的 PTY（portable-pty），因此支持
 /// vim/htop 等全屏 TUI、stty/tput、行编辑与补全等完整 tty 交互特性。
 /// role：rows/cols 由前端 xterm 实际尺寸传入（打开时首帧 + 之后 resize 用 term_resize 同步）。
@@ -1199,6 +1246,25 @@ async fn term_spawn(
     } else {
         cmd.arg("-l"); // 登录 shell
     }
+
+    // 终端集成（仅 zsh）：用临时 ZDOTDIR 注入 precmd，把当前 PWD 经 OSC 0 title 发出，
+    // 前端 xterm.onTitleChange 据此把标签名更新为当前目录。先 source 用户原配置再追加，
+    // 避免破坏既有 prompt/别名。其它 shell（bash/fish 等）不加集成，保持原样可用。
+    let mut zdotdir: Option<PathBuf> = None;
+    #[cfg(unix)]
+    if !cfg!(windows)
+        && Path::new(&shell)
+            .file_name()
+            .map(|f| f == "zsh")
+            .unwrap_or(false)
+    {
+        if let Some(dir) = setup_zsh_integration() {
+            cmd.env("ZDOTDIR", &dir);
+            cmd.env("TERM", "xterm-256color");
+            zdotdir = Some(dir);
+        }
+    }
+
     let mut child = slave
         .spawn_command(cmd)
         .map_err(|e| format!("❌ 启动 shell 失败 ({}): {}", shell, e))?;
@@ -1229,6 +1295,7 @@ async fn term_spawn(
     // 读取 + 等待任务：阻塞线程里逐块读 PTY 主设备，原样 emit（不做按行拆，保留全部控制序列）
     let id_out = id.clone();
     let app_out = app.clone();
+    let zdot_cleanup = zdotdir;
     std::thread::spawn(move || {
         // 用定长数组缓冲：read 按数组长度读；不能用清空的 Vec（len=0 会立即读到 EOF）
         let mut buf = [0u8; 4096];
@@ -1255,6 +1322,10 @@ async fn term_spawn(
             "term-exit",
             &ShellData { id: id_out.clone(), data: code.to_string() },
         );
+        // 清理临时 ZDOTDIR（终端已退出，不再需要）
+        if let Some(dir) = zdot_cleanup {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     });
 
     Ok(format!("✅ 终端 {} 已启动 ({})", id, shell))

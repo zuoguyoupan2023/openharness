@@ -103,6 +103,10 @@ function initTerminalPanel(): void {
       void termKill(id).catch(() => {});
       terms?.closeShell(id);
     },
+    // 点击终端输出中的 URL → 系统浏览器打开
+    onWebLink(uri) {
+      void openUrl(uri).catch(() => {});
+    },
   });
 
   // 默认固定一个 DSH 日志只读终端
