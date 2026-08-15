@@ -42,6 +42,7 @@ const NEEDED = [
   "github", // 插件中心：来源 tabs「GitHub Topic」
   "check", // 插件中心：刷新成功提示条
   "triangle-alert", // 插件中心：刷新失败提示条（lucide 新名，旧 alert-triangle 已改名）
+  "folder-open", // 插件中心：安装本地插件
 ];
 
 const out = {};

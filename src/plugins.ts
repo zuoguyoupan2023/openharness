@@ -154,6 +154,25 @@ function chipVersionLabel(v: string): string {
   return v;
 }
 
+// ============================ 本地插件安装（.tgz / 本地目录） ============================
+
+/**
+ * 计算「更新」一个已安装插件要执行的 dsh 命令：
+ *  - npm 包：`dsh plugin update <pkgName>`（走 registry 升级到最新，含版本比较语义）；
+ *  - github / 本地 file: 等非 npm：`dsh plugin add <installSpec>`（重新解析同一源，取最新）。
+ * 由已安装依赖的 spec 值（installed.deps[name]）判断：本地 file:/link: 或 github 走 add。
+ */
+function updateCommandFor(isNpm: boolean, spec: string | undefined, pkgFallback: string): string[] {
+  const specVal = spec ?? "";
+  if (isNpm && !/^(github:|git\+|file:|link:|\.|\/)/.test(specVal)) {
+    // npm 源：走 pnpm update 到最新
+    return ["plugin", "--profile", "web", "update", pkgFallback];
+  }
+  // github: / file: / 本地目录 / link：无法用 npm 版本语义比较，重新 add 同一 spec 即可
+  const target = specVal && !/^\.{0,2}\//.test(specVal) ? specVal : pkgFallback;
+  return ["plugin", "--profile", "web", "add", target];
+}
+
 // ============================ 主入口 ============================
 
 export function initPlugins(opts: PluginCenterOptions): void {
@@ -312,6 +331,17 @@ export function initPlugins(opts: PluginCenterOptions): void {
       txt.textContent = label ? `${n} @${label}` : n;
       el.appendChild(txt);
       if (isDep) {
+        // 更新：用已安装依赖的实拆 spec（npm 走 update pkg；github:/file: 走 add 同一 spec）
+        const upCmd = updateCommandFor(true, spec, n);
+        const up = document.createElement("button");
+        up.className = "chip-rm";
+        up.title = t("plugins.update") + " " + n;
+        up.innerHTML = iconSvg("refresh-cw");
+        up.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          performAction(`${t("plugins.update")} ${n}`, upCmd);
+        });
+        el.appendChild(up);
         const rm = document.createElement("button");
         rm.className = "chip-rm";
         rm.title = t("plugins.remove") + " " + n;
@@ -422,15 +452,17 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const installedFlag = isInstalled(pkg) || isInstalled(p.name);
     container.innerHTML = "";
     if (installedFlag) {
-      if (p.isNpm) {
-        const up = document.createElement("button");
-        up.className = "install-btn btn-icon";
-        up.innerHTML = iconSvg("upload") + t("plugins.update");
-        up.addEventListener("click", () =>
-          performAction(`${t("plugins.update")} ${pkg}`, ["plugin", "--profile", "web", "update", pkg])
-        );
-        container.appendChild(up);
-      }
+      // 更新：npm 走 update；github/本地走重装同一 spec（upCommand 由 updateCommandFor 统一决定）
+      const instSpec = installedSpecOf(pkg, p.name); // 已安装的依赖 spec（含 github:/file: 值）
+      const upCmd = updateCommandFor(p.isNpm, instSpec, pkg);
+      const up = document.createElement("button");
+      up.className = "install-btn btn-icon";
+      up.innerHTML = iconSvg("upload") + t("plugins.update");
+      up.title = instSpec ? `${t("plugins.updateTo")} ${instSpec}` : t("plugins.update");
+      up.addEventListener("click", () =>
+        performAction(`${t("plugins.update")} ${pkg}`, upCmd)
+      );
+      container.appendChild(up);
       const rm = document.createElement("button");
       rm.className = "install-btn btn-icon";
       rm.innerHTML = iconSvg("trash-2") + t("plugins.remove");
@@ -682,10 +714,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
       let actionsHtml = "";
       if (installedFlag) {
+        const instSpec = installedSpecOf(pkg, p.name); // 已安装依赖 spec（github:/file: 值）
+        const upCmd = updateCommandFor(npm, instSpec, pkg);
         actionsHtml =
-          (npm
-            ? `<button class="install-btn btn-icon" data-act="update" data-spec="${escHtml(pkg)}" title="${escHtml(t("plugins.update"))}">${iconSvg("upload")}</button> `
-            : "") +
+          `<button class="install-btn btn-icon" data-act="update" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(instSpec ? t("plugins.updateTo") + " " + instSpec : t("plugins.update"))}">${iconSvg("upload")}</button> ` +
           `<button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
       } else {
         actionsHtml = `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(spec)}" title="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
@@ -707,7 +739,13 @@ export function initPlugins(opts: PluginCenterOptions): void {
         b.addEventListener("click", () => {
           const act = b.dataset.act;
           if (act === "install") performAction(`${t("plugins.install")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "add", b.dataset.spec!]);
-          else if (act === "update") performAction(`${t("plugins.update")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "update", b.dataset.spec!]);
+          else if (act === "update") {
+            // update 命令在渲染时已序列化进 data-cmd（npm=update pkg；github/local=add spec）
+            const cmd = (b.dataset.cmd || "").split("|");
+            const args = cmd.length >= 2 ? cmd : ["plugin", "--profile", "web", "update", b.dataset.spec!];
+            const label = `${t("plugins.update")} ${b.dataset.spec || cmd[cmd.length - 1] || ""}`;
+            performAction(label, args);
+          }
           else if (act === "remove") performAction(`${t("plugins.remove")} ${b.dataset.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name!]);
         });
       });
@@ -764,6 +802,44 @@ export function initPlugins(opts: PluginCenterOptions): void {
     renderTable();
     updateBadge();
   }
+
+  // ===== 本地插件安装（.tgz 或插件目录）=====
+  // `dsh plugin add <spec>` 原生支持：file:./x-0.1.0.tgz / file:/abs/path / 本地目录。
+  // 这里让用户填写/粘贴本地路径（.tgz 发布包或插件目录均可），组装成 file: spec 后走统一
+  // 的 performAction（add → 重启生效）。相对路径从 profile 目录解析，绝对路径原样。
+  const INSTALL_LOCAL_BTN = "plugins-install-local";
+  const LOCAL_PATH_INPUT = "plugins-local-path";
+  const installLocalBtn = $(INSTALL_LOCAL_BTN) as HTMLButtonElement | null;
+  const localPathInput = $(LOCAL_PATH_INPUT) as HTMLInputElement | null;
+
+  async function installLocalPlugin(): Promise<void> {
+    if (!installLocalBtn || !localPathInput) return;
+    const raw = localPathInput.value.trim();
+    if (!raw) {
+      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
+      return;
+    }
+    installLocalBtn.disabled = true;
+    try {
+      const spec = raw.startsWith("file:") ? raw : `file:${raw}`;
+      await performAction(
+        `${t("plugins.install")} ${spec}`,
+        ["plugin", "--profile", "web", "add", spec]
+      );
+    } catch (e) {
+      opts.onAction(`❌ ${t("plugins.localInstallFail", { err: String(e) })}`);
+    } finally {
+      installLocalBtn.disabled = false;
+      renderTable();
+    }
+  }
+
+  installLocalBtn?.addEventListener("click", () => {
+    void installLocalPlugin();
+  });
+  localPathInput?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") void installLocalPlugin();
+  });
 
   /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺；force=true 强制刷新 */
   async function checkInstalledUpdates(force: boolean): Promise<void> {

@@ -733,6 +733,20 @@
       outline: none;
     }
     #plugins-search:focus { border-color: var(--accent-border); }
+    .local-path-input {
+      flex: 1;
+      min-width: 220px;
+      max-width: 380px;
+      background: var(--card-2);
+      border: 1px dashed var(--border-strong);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 6px 12px;
+      font-size: 0.83rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .local-path-input:focus { border-color: var(--accent-border); border-style: solid; }
     .plugin-cats { display: flex; flex-wrap: wrap; gap: 6px; }
     .cat-chip {
       background: var(--card);
@@ -1265,6 +1279,11 @@
         <button id="plugins-refresh" class="btn-icon">
           <i data-icon="refresh-cw"></i>
           <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+        </button>
+        <input id="plugins-local-path" class="local-path-input" data-i18n-placeholder="plugins.localPathPlaceholder" placeholder="本地插件路径：plugins/我的插件 或 /abs/plugin.tgz" spellcheck="false" />
+        <button id="plugins-install-local" class="btn-icon" title="dsh plugin add file:&lt;path&gt;">
+          <i data-icon="folder-open"></i>
+          <span data-i18n="plugins.localInstall">安装本地插件</span>
         </button>
         <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
       </div>
