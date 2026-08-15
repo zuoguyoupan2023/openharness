@@ -572,17 +572,28 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 30px;
+      gap: 5px;
+      width: auto;
+      min-width: 32px;
       height: 30px;
+      padding: 0 9px;
       border-radius: 9px;
-      background: var(--panel);
-      border: 1px solid var(--border-soft);
-      color: var(--text-dim);
+      background: linear-gradient(135deg, rgba(79,156,249,.16), var(--panel));
+      border: 1px solid var(--accent, #4f9cf9);
+      color: var(--accent, #4f9cf9);
       cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      font-weight: 600;
+      transition: transform 0.12s, box-shadow 0.12s, background 0.15s, color 0.15s;
       margin-left: 4px;
     }
-    .agent-btn:hover { background: var(--hover); color: var(--text); }
+    .agent-btn:hover {
+      color: #fff;
+      background: var(--accent, #4f9cf9);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(79,156,249,.35);
+    }
+    .agent-btn.is-open { color: #fff; background: var(--accent, #4f9cf9); }
+    .agent-btn .agent-btn-label { font-size: 0.72rem; letter-spacing: .3px; }
     .agent-menu {
       position: absolute;
       top: 36px;
@@ -1203,7 +1214,7 @@
         </button>
         <div class="agent-wrap">
           <button class="agent-btn" id="agent-btn" data-i18n-title="agent.title" aria-label="智能体">
-            <i data-icon="terminal"></i>
+            <i data-icon="terminal"></i><span class="agent-btn-label" data-i18n="agent.title">智能体</span>
           </button>
           <div class="agent-menu" id="agent-menu" hidden>
             <div class="agent-menu-head" id="agent-menu-head">智能体</div>

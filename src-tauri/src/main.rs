@@ -1289,10 +1289,27 @@ async fn agent_list() -> Result<Vec<AgentInfo>, String> {
     Ok(out)
 }
 
-/// 在 PATH 中定位某命令的绝对路径（`command -v` 等价，仅 Unix 语义）。
+/// 在「当前 PATH + 常见安装目录」中定位某命令的绝对路径。
+/// 为何要并上 node_search_dirs()：Tauri GUI 从 Finder/Launchpad 启动时进程 PATH 往往很短
+/// （不含 ~/.nvm/...、~/.volta/bin、~/.local/bin、/opt/homebrew/bin 等），而 claude/codex 等
+/// 常装在 nvm/volta 目录，光看进程 PATH 会误判「未装」。合并常见目录后检测才可靠。
 fn detect_cmd(name: &str) -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
+    // 收集去重的候选目录：常见安装目录优先于进程 PATH（与终端里 command -v 语义接近）
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for d in node_search_dirs() {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for d in std::env::split_paths(&path) {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+
+    for dir in dirs {
         let cand = dir.join(name);
         #[cfg(unix)]
         {

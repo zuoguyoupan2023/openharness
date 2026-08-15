@@ -173,7 +173,10 @@ function initAgentLauncher(): void {
   const foot = $("agent-menu-foot");
 
   // 关闭其它区域的点击穿透
-  const close = () => menu.hidden = true;
+  const close = () => {
+    menu.hidden = true;
+    btn.classList.remove("is-open");
+  };
   document.addEventListener("click", (ev) => {
     if (!menu.hidden && !(menu as any).contains(ev.target) && ev.target !== btn) close();
   });
@@ -184,6 +187,7 @@ function initAgentLauncher(): void {
     close();
     if (showing) return;
     menu.hidden = false;
+    btn.classList.add("is-open");
     foot.textContent = t("agent.foot");
     list.innerHTML = `<div class="agent-item" style="cursor:default">${t("agent.empty")}</div>`;
     try {
