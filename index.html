@@ -1130,9 +1130,7 @@
     <section id="view-logs" class="view">
       <div class="logs-toolbar">
         <div class="term-tabs" id="term-tabs">
-          <div class="term-tab active" data-tabb id="tab-dsh-log" data-i18n-title="term.log.tab">
-            <span class="term-tab-name" data-i18n="term.log.tab">DSH 日志</span>
-          </div>
+          <!-- 「DSH 日志」标签由 TermManager.ensureLog() 动态创建，此处不再写死，避免出现重复按钮 -->
         </div>
         <button class="term-add" id="term-add" data-i18n-title="term.add" aria-label="新增终端">
           <i data-icon="plus"></i>
