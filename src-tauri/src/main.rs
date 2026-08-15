@@ -124,6 +124,117 @@ fn set_close_with_app(app: AppHandle, enabled: bool) -> Result<Settings, String>
     Ok(s)
 }
 
+/// 当前 DSH web 的主题 / 语言偏好快照（供壳 UI 与其双向同步）
+#[derive(serde::Serialize)]
+struct DshSettingsSnapshot {
+    /// ui-theme.preference：light / dark / system
+    theme: String,
+    /// locale.preference：zh / en
+    lang: String,
+}
+
+/// POST /api/settings.describe，读取 DSH web 当前 ui-theme 与 locale 偏好。
+/// DSH 的 /api 对回环地址无鉴权；Rust 侧 reqwest 不带浏览器 Origin 头，可正常访问（3080 严格校验 Origin 为回环）。
+async fn dsh_settings_describe() -> Result<DshSettingsSnapshot, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败: {}", e))?;
+    let body = r#"{"type":"client-request","rpcId":"shell-snapshot","method":"settings.describe","payload":{}}"#;
+    let resp = client
+        .post("http://127.0.0.1:3080/api/settings.describe")
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("DSH 不可达: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("DSH HTTP {}", resp.status()));
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("describe 响应读取失败: {}", e))?;
+    let root: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("describe 响应解析失败: {}", e))?;
+    let namespaces = root["result"]["value"]["namespaces"]
+        .as_array()
+        .ok_or("describe 响应缺 namespaces")?;
+    let mut theme = "system".to_string();
+    let mut lang = "zh".to_string();
+    for ns in namespaces {
+        match ns["ns"].as_str() {
+            Some("ui-theme") => {
+                theme = ns["value"]["preference"]
+                    .as_str()
+                    .filter(|v| *v == "light" || *v == "dark" || *v == "system")
+                    .unwrap_or("system")
+                    .to_string();
+            }
+            Some("locale") => {
+                lang = ns["value"]["preference"]
+                    .as_str()
+                    .filter(|v| *v == "zh" || *v == "en")
+                    .unwrap_or("zh")
+                    .to_string();
+            }
+            _ => {}
+        }
+    }
+    Ok(DshSettingsSnapshot { theme, lang })
+}
+
+/// 读取 DSH web 当前主题 / 语言（壳 UI 初始化或反向同步用）
+#[tauri::command]
+async fn dsh_settings_snapshot() -> Result<DshSettingsSnapshot, String> {
+    dsh_settings_describe().await
+}
+
+/// 把某个偏好写入 DSH web（壳 → DSH，用户切主题/语言时调用）
+/// ns: "ui-theme" | "locale"；value: light/dark/system 或 zh/en
+#[tauri::command]
+async fn dsh_settings_set(ns: String, value: String) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败: {}", e))?;
+    // 用 serde_json 编码避免字符串内引号转义问题
+    let payload = serde_json::json!({
+        "type": "client-request",
+        "rpcId": "shell-mutate",
+        "method": "settings.mutate",
+        "payload": {
+            "ns": ns,
+            "ops": [{ "op": "set", "path": ["preference"], "value": value }]
+        }
+    })
+    .to_string();
+    let resp = client
+        .post("http://127.0.0.1:3080/api/settings.mutate")
+        .header("content-type", "application/json")
+        .body(payload)
+        .send()
+        .await
+        .map_err(|e| format!("DSH 不可达: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("DSH HTTP {}", resp.status()));
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("mutate 响应读取失败: {}", e))?;
+    let root: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("mutate 响应解析失败: {}", e))?;
+    if root["result"]["ok"].as_bool() != Some(true) {
+        return Err(format!(
+            "DSH 拒绝: {}",
+            root["result"]["error"]["message"].as_str().unwrap_or("未知错误")
+        ));
+    }
+    Ok(())
+}
+
+
 /// 按设置向子进程注入 npm registry 环境变量。
 /// `npm_config_registry` 会级联到 npx（下载 dsh）与 pnpm（`dsh plugin` 内部）的所有子进程。
 fn apply_registry_env(cmd: &mut Command, app: &AppHandle) {
@@ -1565,6 +1676,8 @@ fn main() {
             get_settings,
             set_registry,
             set_close_with_app,
+            dsh_settings_snapshot,
+            dsh_settings_set,
             check_node,
             download_node,
             webview_create,

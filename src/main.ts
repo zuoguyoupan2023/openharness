@@ -26,8 +26,9 @@ import {
 } from "./node";
 import { mountIcons, iconSvg } from "./icons";
 import { initLang, setLang, getLang, t } from "./i18n";
-import { initTheme, cycleTheme, effectiveTheme } from "./theme";
+import { initTheme, cycleTheme, effectiveTheme, getThemePref } from "./theme";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { startDshSettingsSync, pushPref } from "./dsh-settings";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -231,6 +232,9 @@ async function boot(): Promise<void> {
   initLang();
   initTheme();
 
+  // ===== 与 DSH web 的主题 / 语言双向同步（壳 ↔ 3080） =====
+  startDshSettingsSync();
+
   window.addEventListener("error", (e) => {
     appendLog("❌ 前端错误: " + (e.message || String(e.error || e.type)));
   });
@@ -356,12 +360,20 @@ async function boot(): Promise<void> {
     holder.innerHTML = iconSvg(name);
   };
   themeBtn?.addEventListener("click", () => cycleTheme());
-  window.addEventListener("theme-changed", updateThemeIcon);
+  window.addEventListener("theme-changed", () => {
+    updateThemeIcon();
+    // 壳 → DSH：把当前主题偏好同步到 DSH web 的 ui-theme.preference
+    void pushPref("ui-theme", getThemePref());
+  });
   updateThemeIcon();
 
   const langBtn = document.getElementById("lang-toggle");
   langBtn?.addEventListener("click", () => {
     setLang(getLang() === "zh" ? "en" : "zh");
+  });
+  window.addEventListener("lang-changed", () => {
+    // 壳 → DSH：把当前语言同步到 DSH web 的 locale.preference
+    void pushPref("locale", getLang());
   });
 
   // ===== 启动：检查 Node 环境 =====

@@ -105,8 +105,8 @@
 
     /* ===== 左侧边栏 — 可折叠窄条 ===== */
     #sidebar {
-      width: 210px;
-      flex: 0 0 210px;
+      width: 160px;
+      flex: 0 0 160px;
       background: var(--panel);
       border-right: 1px solid var(--border);
       display: flex;
@@ -143,9 +143,7 @@
     .brand:hover { background: var(--hover); }
     .brand .name,
     .brand .name-short {
-      background: linear-gradient(135deg, var(--grad-1), var(--grad-2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--text);
       line-height: 1.2;
       white-space: nowrap;
     }
@@ -257,8 +255,9 @@
     }
     .dsh-status {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 4px;
       color: var(--text-dim);
       white-space: nowrap;
       overflow: hidden;
