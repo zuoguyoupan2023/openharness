@@ -167,10 +167,15 @@ function initTerminalPanel(): void {
 
 // ===== 智能体启动器（L1：检测 + 一键启动）=====
 function initAgentLauncher(): void {
-  const btn = $("agent-btn");
-  const menu = $("agent-menu");
-  const list = $("agent-menu-list");
-  const foot = $("agent-menu-foot");
+  const btn = document.getElementById("agent-btn");
+  const menu = document.getElementById("agent-menu");
+  const list = document.getElementById("agent-menu-list");
+  const foot = document.getElementById("agent-menu-foot");
+  // DOM 缺任一元素（旧 bundle / 打包不一致）时不崩溃，静默跳过该功能
+  if (!btn || !menu || !list || !foot) {
+    console.warn("agent launcher DOM missing, skip init");
+    return;
+  }
 
   // 关闭其它区域的点击穿透
   const close = () => {
@@ -178,7 +183,7 @@ function initAgentLauncher(): void {
     btn.classList.remove("is-open");
   };
   document.addEventListener("click", (ev) => {
-    if (!menu.hidden && !(menu as any).contains(ev.target) && ev.target !== btn) close();
+    if (!menu.hidden && !menu.contains(ev.target as Node) && ev.target !== btn) close();
   });
 
   btn.addEventListener("click", async (ev) => {
@@ -227,7 +232,8 @@ async function launchAgent(a: import("./dsh").AgentInfo): Promise<void> {
   const id = terms?.nextShellId() ?? `agent-${Date.now()}`;
   // 智能体终端：带关闭按钮，标签名直接用命令名
   terms?.newShell(id, a.name);
-  $("#agent-menu").hidden = true;
+  const m = document.getElementById("agent-menu");
+  if (m) m.hidden = true;
   const { rows, cols } = terms?.getSize(id) ?? { rows: 24, cols: 80 };
   try {
     appendLog(await agentSpawn(id, rows, cols, a.key));

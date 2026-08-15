@@ -1204,6 +1204,39 @@ _oh_pwd
     Some(dir)
 }
 
+/// 构建「登录 + 交互」shell 的 CommandBuilder（macOS/Linux：`$SHELL -l`，仅 zsh 额外 `-i`
+/// 并用临时 ZDOTDIR 注入 PWD→OSC title 的集成；Windows：`%COMSPEC% /Q`）。
+/// 返回 (cmd, zdotdir)；zdotdir 由调用方在终端退出后清理。
+fn build_login_shell_command() -> (portable_pty::CommandBuilder, Option<PathBuf>) {
+    use portable_pty::CommandBuilder;
+    let shell = if cfg!(windows) {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+    } else {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+    };
+    let mut cmd = CommandBuilder::new(&shell);
+    let mut zdotdir: Option<PathBuf> = None;
+    if cfg!(windows) {
+        cmd.arg("/Q");
+    } else {
+        cmd.arg("-l"); // 登录 shell，加载用户环境
+        // zsh：可交互地加载 rc（PATH/别名），并挂 PWD→OSC title 集成
+        if std::path::Path::new(&shell)
+            .file_name()
+            .map(|f| f == "zsh")
+            .unwrap_or(false)
+        {
+            cmd.arg("-i");
+            if let Some(dir) = setup_zsh_integration() {
+                cmd.env("ZDOTDIR", &dir);
+                cmd.env("TERM", "xterm-256color");
+                zdotdir = Some(dir);
+            }
+        }
+    }
+    (cmd, zdotdir)
+}
+
 /// 新建一个独立的 shell 终端：为 shell 分配真正的 PTY（portable-pty），因此支持
 /// vim/htop 等全屏 TUI、stty/tput、行编辑与补全等完整 tty 交互特性。
 /// role：rows/cols 由前端 xterm 实际尺寸传入（打开时首帧 + 之后 resize 用 term_resize 同步）。
@@ -1216,41 +1249,15 @@ async fn term_spawn(
     rows: u32,
     cols: u32,
 ) -> Result<String, String> {
-    use portable_pty::CommandBuilder;
-
     // 同 id 已存在则先清理（幂等）
     kill_shell(&app, &id).await;
 
+    let (cmd, zdotdir) = build_login_shell_command();
     let shell = if cfg!(windows) {
         std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
     };
-
-    // 从设备侧命令：登录 shell，加载用户环境
-    let mut cmd = CommandBuilder::new(&shell);
-    if cfg!(windows) {
-        cmd.arg("/Q");
-    } else {
-        cmd.arg("-l"); // 登录 shell
-    }
-
-    // 终端集成（仅 zsh）：用临时 ZDOTDIR 注入 precmd 把 PWD 经 OSC title 发出（供标签名显示目录）
-    let mut zdotdir: Option<PathBuf> = None;
-    #[cfg(unix)]
-    if !cfg!(windows)
-        && std::path::Path::new(&shell)
-            .file_name()
-            .map(|f| f == "zsh")
-            .unwrap_or(false)
-    {
-        if let Some(dir) = setup_zsh_integration() {
-            cmd.env("ZDOTDIR", &dir);
-            cmd.env("TERM", "xterm-256color");
-            zdotdir = Some(dir);
-        }
-    }
-
     spawn_pty_internal(&app, &id, rows, cols, cmd, zdotdir, &shell).await
 }
 
@@ -1331,8 +1338,10 @@ fn detect_cmd(name: &str) -> Option<String> {
     None
 }
 
-/// 一键启动某个智能体：在独立 PTY 里直接运行该 CLI（完全拥有终端，TUI 正常）。
-/// 若该命令未安装则返回错误；前端 L1 应在点它前先据 agent_list 禁用。
+/// 一键启动某个智能体：先拉起一个「登录 + 交互」shell（复用 shell 终端那一套，环境完整、
+/// PTY/回收都对），再把 agent 命令喂进去，让 CLI 作为 shell 的前台子进程独占终端。
+/// 相比“直接当作 PTY 子进程跑”更稳：GUI 环境很“空”，直接跑 CLI 常因缺路径/环境立刻退出。
+/// 用交互 shell 后，shell（zsh 等）一直存活 → term_write 不会因子进程退出而失败。
 #[tauri::command]
 async fn agent_spawn(
     app: AppHandle,
@@ -1341,56 +1350,54 @@ async fn agent_spawn(
     cols: u32,
     agent: String,
 ) -> Result<String, String> {
-    use portable_pty::CommandBuilder;
+    use std::io::Write as _;
+
     // 同 id 已存在则先清理（幂等）
     kill_shell(&app, &id).await;
 
-    // 找到 agent 定义
+    // 找到 agent 定义并检测其绝对路径
     let def = AGENTS
         .iter()
         .find(|(k, _, _)| *k == agent)
         .ok_or_else(|| format!("未知智能体: {}", agent))?;
     let (_, command, _) = def;
-
-    // 检测路径并直接调用（不依赖子进程 PATH，避免 GUIFinder PATH 问题）
     let path = detect_cmd(command)
         .ok_or_else(|| format!("未安装 {}（command -v 找不到，请先安装）", command))?;
 
-    #[cfg(not(windows))]
-    let mut cmd = {
-        // 通过用户的「登录 + 交互」shell 启动智能体：GUI 进程环境很“空”（Finder 启动 PATH 短、
-        // 缺 nvm/volta 等），直接跑 CLI 常因缺路径/环境变量立刻退出。用 `$SHELL -l -i -c 'exec …'`
-        // 先加载用户 .zshenv/.zprofile/.zshrc 等完整登录环境，再 exec 掉 shell 让 CLI 独占 PTY。
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-        let mut c = CommandBuilder::new(&shell);
-        c.arg("-l");
-        // 交互标志会加载用户 rc（nvm PATH / 别名 / API 相关环境变量）
-        if Path::new(&shell)
-            .file_name()
-            .map(|f| f == "zsh")
-            .unwrap_or(false)
-        {
-            c.arg("-i");
-        }
-        // exec 替换本 shell，claude/codex 等 TUI 完全拥有终端
-        let quoted = path.replace('\'', "'\\''");
-        c.arg("-c");
-        c.arg(format!("exec '{}'", quoted));
-        c
-    };
+    // 复用与 shell 终端相同的登录交互 shell 启动（环境完整）
     #[cfg(windows)]
-    let mut cmd = {
-        let mut c = CommandBuilder::new(&path);
-        c
+    let (cmd, zdotdir) = {
+        use portable_pty::CommandBuilder;
+        // Windows：spawn 交互式 cmd.exe，再在下方把 agent 的 .cmd shim 喂进 stdin 执行
+        (CommandBuilder::new("cmd.exe"), None)
     };
+    #[cfg(not(windows))]
+    let (cmd, zdotdir) = build_login_shell_command();
 
-    // 注入合并后的 PATH 兜底（含 nvm/volta/brew），并设 TERM
-    let merged_path = node_path_env(&app);
-    cmd.env("PATH", merged_path);
-    cmd.env("TERM", "xterm-256color");
+    let shell = if cfg!(windows) {
+        "cmd".to_string()
+    } else {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+    };
+    spawn_pty_internal(&app, &id, rows, cols, cmd, zdotdir, &shell).await?;
 
-    // 智能体是前台 TUI，无需 zsh precmd（目录与标题无关）
-    spawn_pty_internal(&app, &id, rows, cols, cmd, None, command).await
+    // shell 起来后，把 agent 命令喂进去执行（带换行回车），CLI 将作为前台 job 接管终端
+    let state = app.state::<Shells>();
+    let all = state.0.lock().await;
+    if let Some(entry) = all.get(&id) {
+        let mut writer = entry.writer.lock().unwrap();
+        // 带引号传入绝对路径，避免路径含空格；Windows .cmd 已在创建时处理
+        let quoted = path.replace('\'', "'\\''");
+        let cmdline = if cfg!(windows) {
+            format!("{}\r", &path) // Windows 下 path 即 .cmd，直接回车执行
+        } else {
+            format!("'{}'\r", quoted)
+        };
+        let _ = writer.write_all(cmdline.as_bytes());
+        let _ = writer.flush();
+    }
+
+    Ok(format!("✅ {} 已启动", command))
 }
 
 /// 共享的 PTY 拉起核心：打开 PTY、spawn 给定命令、登记注册表、起读取/等待线程。
