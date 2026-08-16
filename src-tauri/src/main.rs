@@ -1952,6 +1952,7 @@ fn main() {
         .manage(WebviewRegistry(Mutex::new(HashMap::new())))
         .manage(NodeBusy(Mutex::new(false)))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,

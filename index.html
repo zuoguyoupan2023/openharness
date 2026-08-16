@@ -704,41 +704,45 @@
       border-radius: 30px;
       font-weight: 400;
     }
-    .plugins-actions {
+    .plugin-add-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .plugin-add-row {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
-    .plugins-actions button {
-      background: var(--accent-strong);
-      border: none;
-      color: var(--accent-text);
-      padding: 6px 16px;
-      border-radius: 10px;
-      font-size: 0.83rem;
-      font-weight: 500;
-      cursor: pointer;
+    .plugin-add-row-inner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
-    .plugins-actions button:hover { background: var(--accent); }
-    .plugins-actions button:disabled { opacity: 0.5; cursor: wait; }
+    .plugin-add-label {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      font-weight: 500;
+    }
+    .plugin-add-sep {
+      width: 1px;
+      height: 22px;
+      background: var(--border-strong);
+      margin: 0 2px;
+    }
+    .local-path-input,
+    #plugins-npm-search,
     #plugins-search {
-      width: 260px;
       background: var(--card-2);
       border: 1px solid var(--border-strong);
-      border-radius: 8px;
-      color: var(--text);
-      padding: 6px 12px;
-      font-size: 0.83rem;
-      outline: none;
-    }
-    #plugins-search:focus { border-color: var(--accent-border); }
-    .local-path-input {
-      flex: 1;
-      min-width: 220px;
-      max-width: 380px;
-      background: var(--card-2);
-      border: 1px dashed var(--border-strong);
       border-radius: 8px;
       color: var(--text);
       padding: 6px 12px;
@@ -746,7 +750,59 @@
       font-family: inherit;
       outline: none;
     }
+    .local-path-input { flex: 1; min-width: 180px; border-style: dashed; }
     .local-path-input:focus { border-color: var(--accent-border); border-style: solid; }
+    #plugins-npm-search { flex: 1.6; min-width: 200px; }
+    #plugins-search { flex: 1; min-width: 180px; max-width: 320px; }
+    #plugins-search:focus,
+    #plugins-npm-search:focus { border-color: var(--accent-border); }
+    .plugin-add-card button.add-btn {
+      background: var(--accent-strong);
+      border: none;
+      color: var(--accent-text);
+      padding: 6px 14px;
+      border-radius: 10px;
+      font-size: 0.83rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .plugin-add-card button.add-btn:hover { background: var(--accent); }
+    .plugin-add-card button.add-btn:disabled { opacity: 0.5; cursor: wait; }
+    .plugin-add-card button.link-btn {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text-dim);
+      padding: 5px 12px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .plugin-add-card button.link-btn:hover { color: var(--text); border-color: var(--accent-border); }
+    .npm-results {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .npm-result {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.8rem;
+    }
+    .npm-result-main { flex: 1; min-width: 0; }
+    .npm-result-name { font-weight: 600; color: var(--text); }
+    .npm-result-ver { color: var(--text-dim); margin-left: 6px; font-size: 0.75rem; }
+    .npm-result-desc { color: var(--text-dim); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+    .npm-result button { white-space: nowrap; }
+    .npm-result.dim { opacity: 0.55; }
     .plugin-cats { display: flex; flex-wrap: wrap; gap: 6px; }
     .cat-chip {
       background: var(--card);
@@ -1275,17 +1331,28 @@
         <span data-i18n="plugins.communityTitle">插件市场（精选 + GitHub Topic）</span>
         <span class="badge" id="plugin-count">-</span>
       </div>
-      <div class="plugins-actions">
-        <button id="plugins-refresh" class="btn-icon">
-          <i data-icon="refresh-cw"></i>
-          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
-        </button>
-        <input id="plugins-local-path" class="local-path-input" data-i18n-placeholder="plugins.localPathPlaceholder" placeholder="本地插件路径：plugins/我的插件 或 /abs/plugin.tgz" spellcheck="false" />
-        <button id="plugins-install-local" class="btn-icon" title="dsh plugin add file:&lt;path&gt;">
-          <i data-icon="folder-open"></i>
-          <span data-i18n="plugins.localInstall">安装本地插件</span>
-        </button>
-        <input id="plugins-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
+      <div class="plugin-add-card">
+        <div class="plugin-add-row">
+          <span class="plugin-add-label" data-i18n="plugins.addFromLabel">从其它来源添加</span>
+          <input id="plugins-local-path" class="local-path-input" data-i18n-placeholder="plugins.localPathPlaceholder" placeholder="本地插件：/abs/plugin.tgz 或 ./本地目录" spellcheck="false" />
+          <button id="plugins-install-local" class="btn-icon add-btn" title="dsh plugin add file:&lt;path&gt;">
+            <i data-icon="folder-open"></i>
+            <span data-i18n="plugins.localInstall">安装本地</span>
+          </button>
+          <span class="plugin-add-sep"></span>
+          <input id="plugins-npm-search" data-i18n-placeholder="plugins.npmSearchPlaceholder" placeholder="按 npm 包名搜索并一键安装，如 dsh-theme-center" spellcheck="false" />
+          <button id="plugins-npm-go" class="btn-icon add-btn" title="search npm">
+            <i data-icon="search"></i>
+          </button>
+        </div>
+        <div id="plugins-npm-results" class="npm-results" hidden></div>
+        <div class="plugin-add-row-inner">
+          <button id="plugins-refresh" class="btn-icon link-btn">
+            <i data-icon="refresh-cw"></i>
+            <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+          </button>
+          <input id="plugins-search" class="local-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
+        </div>
       </div>
       <div id="plugin-source-tabs" class="source-tabs"></div>
       <div id="plugin-cats" class="plugin-cats"></div>

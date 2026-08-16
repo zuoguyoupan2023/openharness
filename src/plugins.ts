@@ -16,6 +16,7 @@ import {
   setPluginCache,
   type InstalledPlugins,
 } from "./dsh";
+import { open } from "@tauri-apps/plugin-dialog";
 import { t, getLang } from "./i18n";
 import { iconSvg } from "./icons";
 import {
@@ -147,6 +148,21 @@ async function fetchNpmMeta(name: string): Promise<NpmMeta | null> {
   return d;
 }
 
+/** npm registry 搜索结果（/-/v1/search 简写） */
+interface NpmSearchItem {
+  package?: { name?: string; version?: string; description?: string; links?: { homepage?: string } };
+}
+interface NpmSearchResult {
+  objects?: NpmSearchItem[];
+}
+/** 按文本在 npm registry 实时搜索（镜像回退），失败返回空数组 */
+async function searchNpm(text: string): Promise<NpmSearchItem[]> {
+  const d = await fetchWithFallback<NpmSearchResult>(
+    `/-/v1/search?text=${encodeURIComponent(text)}&size=12`
+  );
+  return d?.objects ?? [];
+}
+
 /** 已安装 chip 的版本标签：file:/link: 本地链接显示「本地」；npm spec 原样 */
 function chipVersionLabel(v: string): string {
   if (!v) return "";
@@ -191,6 +207,9 @@ export function initPlugins(opts: PluginCenterOptions): void {
     loading: $("plugin-loading"),
     banner: $("plugin-snapshot-banner"),
     badge: document.getElementById("nav-plugins-badge") as HTMLElement | null,
+    npmSearch: $("plugins-npm-search") as HTMLInputElement | null,
+    npmGo: $("plugins-npm-go") as HTMLButtonElement | null,
+    npmResults: $("plugins-npm-results") as HTMLElement | null,
   };
 
   let snapshot: RegistrySnapshot = getSnapshot();
@@ -805,27 +824,19 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   // ===== 本地插件安装（.tgz 或插件目录）=====
   // `dsh plugin add <spec>` 原生支持：file:./x-0.1.0.tgz / file:/abs/path / 本地目录。
-  // 这里让用户填写/粘贴本地路径（.tgz 发布包或插件目录均可），组装成 file: spec 后走统一
-  // 的 performAction（add → 重启生效）。相对路径从 profile 目录解析，绝对路径原样。
+  // ① 点「安装本地」按钮 → 弹系统对话框选「文件夹」或「.tgz 安装包」（原生 picker）；
+  // ② 也可直接在输入框填写/粘贴路径作为快捷方式。
   const INSTALL_LOCAL_BTN = "plugins-install-local";
   const LOCAL_PATH_INPUT = "plugins-local-path";
   const installLocalBtn = $(INSTALL_LOCAL_BTN) as HTMLButtonElement | null;
   const localPathInput = $(LOCAL_PATH_INPUT) as HTMLInputElement | null;
 
-  async function installLocalPlugin(): Promise<void> {
-    if (!installLocalBtn || !localPathInput) return;
-    const raw = localPathInput.value.trim();
-    if (!raw) {
-      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
-      return;
-    }
+  /** 执行一次本地插件安装（spec 为 file: 前缀的本地路径 spec），走统一 performAction */
+  async function doLocalInstall(spec: string): Promise<void> {
+    if (!installLocalBtn) return;
     installLocalBtn.disabled = true;
     try {
-      const spec = raw.startsWith("file:") ? raw : `file:${raw}`;
-      await performAction(
-        `${t("plugins.install")} ${spec}`,
-        ["plugin", "--profile", "web", "add", spec]
-      );
+      await performAction(`${t("plugins.install")} ${spec}`, ["plugin", "--profile", "web", "add", spec]);
     } catch (e) {
       opts.onAction(`❌ ${t("plugins.localInstallFail", { err: String(e) })}`);
     } finally {
@@ -834,11 +845,34 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
+  async function installLocalPlugin(): Promise<void> {
+    if (!installLocalBtn) return;
+    // 优先走原生「选文件夹」（用户最常用）；取消后再试「选 .tgz 文件」。
+    // 若原生对话框不可用（异常），回退到输入框填写。
+    try {
+      const dir = await open({ multiple: false, directory: true, title: t("plugins.localPickDir") });
+      if (dir && typeof dir === "string") {
+        localPathInput && (localPathInput.value = dir);
+        return void doLocalInstall(`file:${dir}`);
+      }
+    } catch {
+      /* 原生对话框不可用，走输入框兜底 */
+    }
+    // 对话框被取消或不可用：从输入框取路径
+    const raw = localPathInput?.value.trim() ?? "";
+    if (!raw) {
+      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
+      return;
+    }
+    const spec = raw.startsWith("file:") ? raw : `file:${raw}`;
+    void doLocalInstall(spec);
+  }
+
   installLocalBtn?.addEventListener("click", () => {
     void installLocalPlugin();
   });
   localPathInput?.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") void installLocalPlugin();
+    if (ev.key === "Enter") void doLocalInstall(localPathInput.value.trim() ? (localPathInput.value.trim().startsWith("file:") ? localPathInput.value.trim() : `file:${localPathInput.value.trim()}`) : "");
   });
 
   /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺；force=true 强制刷新 */
@@ -927,6 +961,76 @@ export function initPlugins(opts: PluginCenterOptions): void {
   els.search.addEventListener("input", () => {
     filterText = els.search.value;
     renderTable();
+  });
+
+  // ===== npm 按包名实时搜索 + 一键安装 =====
+  let npmTimer = 0;
+  async function runNpmSearch(): Promise<void> {
+    if (!els.npmSearch || !els.npmResults || !els.npmGo) return;
+    const q = els.npmSearch.value.trim();
+    if (!q) {
+      els.npmResults.hidden = true;
+      els.npmResults.innerHTML = "";
+      return;
+    }
+    els.npmGo.disabled = true;
+    els.npmResults.hidden = false;
+    els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearching"))}</div>`;
+    try {
+      const items = await searchNpm(q);
+      if (!items.length) {
+        els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmNoResult"))}</div>`;
+        return;
+      }
+      els.npmResults.innerHTML = "";
+      for (const it of items) {
+        const name = it.package?.name ?? "";
+        if (!name) continue;
+        const ver = it.package?.version ?? "";
+        const desc = it.package?.description ?? "";
+        const installedFlag = isInstalled(name);
+        const row = document.createElement("div");
+        row.className = "npm-result" + (installedFlag ? " dim" : "");
+        const main = document.createElement("div");
+        main.className = "npm-result-main";
+        const nm = document.createElement("div");
+        nm.innerHTML = `<span class="npm-result-name">${escHtml(name)}</span><span class="npm-result-ver">${escHtml(ver)}</span>`;
+        if (desc) {
+          const d = document.createElement("div");
+          d.className = "npm-result-desc";
+          d.textContent = desc;
+          nm.appendChild(d);
+        }
+        main.appendChild(nm);
+        row.appendChild(main);
+        const btn = document.createElement("button");
+        btn.className = "install-btn btn-icon";
+        if (installedFlag) {
+          btn.innerHTML = iconSvg("check") + t("plugins.installedTag");
+          btn.disabled = true;
+        } else {
+          btn.innerHTML = iconSvg("download") + t("plugins.install");
+          btn.addEventListener("click", () =>
+            performAction(`${t("plugins.install")} ${name}`, ["plugin", "--profile", "web", "add", name])
+          );
+        }
+        row.appendChild(btn);
+        els.npmResults.appendChild(row);
+      }
+    } catch (e) {
+      els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearchFail", { err: String(e) }))}</div>`;
+    } finally {
+      els.npmGo.disabled = false;
+    }
+  }
+
+  els.npmSearch?.addEventListener("input", () => {
+    window.clearTimeout(npmTimer);
+    npmTimer = window.setTimeout(() => void runNpmSearch(), 400);
+  });
+  els.npmGo?.addEventListener("click", () => void runNpmSearch());
+  els.npmSearch?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") void runNpmSearch();
   });
 
   window.addEventListener("lang-changed", () => {
