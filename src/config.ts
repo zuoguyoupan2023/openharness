@@ -12,13 +12,15 @@ export interface Settings {
   closeWithApp: boolean;
   /** DSH 版本锁定：x.y.z = 固定该版本；null = 跟随最新（默认） */
   dshVersionLocked: string | null;
+  /** DSH 更新模式：auto = 自动更新（默认）；manual = 手动更新 */
+  dshUpdateMode: string;
 }
 
 export async function getSettings(): Promise<Settings> {
   try {
     return await invoke<Settings>("get_settings");
   } catch {
-    return { registry: NPM_OFFICIAL, closeWithApp: true, dshVersionLocked: null };
+    return { registry: NPM_OFFICIAL, closeWithApp: true, dshVersionLocked: null, dshUpdateMode: "auto" };
   }
 }
 

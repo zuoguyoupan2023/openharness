@@ -101,11 +101,20 @@ struct Settings {
     /// None = 跟随最新（npx 默认行为）。改动后在下次启动/重启时生效。
     #[serde(default)]
     dsh_version_locked: Option<String>,
+    /// DSH 更新模式：auto = 跟随最新（npx 自动解析，默认）；
+    /// manual = 锁定当前版本，仅当用户点击「更新到最新版」才升级。
+    #[serde(default = "default_update_mode")]
+    dsh_update_mode: String,
 }
 
 /// 缺失字段的默认值；close_with_app 缺省为 true（随 app 关闭）
 fn default_close_with_app() -> bool {
     true
+}
+
+/// DSH 更新模式默认 auto（跟随最新）
+fn default_update_mode() -> String {
+    "auto".to_string()
 }
 
 impl Default for Settings {
@@ -114,6 +123,7 @@ impl Default for Settings {
             registry: String::new(),
             close_with_app: true,
             dsh_version_locked: None,
+            dsh_update_mode: "auto".to_string(),
         }
     }
 }
@@ -213,7 +223,8 @@ async fn run_capture_timeout(cmd: &mut tokio::process::Command, secs: u64) -> Op
     }
 }
 
-/// 从任意输出串中提取形如 x.y.z 的版本号（兼容 "dsh 0.1.2" / "v0.1.2" / "0.1.2-beta.1" 等）
+/// 从任意输出串中提取形如 x.y.z 的版本号（兼容 "dsh 0.1.2" / "v0.1.2" / "0.1.2-beta.1" 等）。
+/// 保留预发布后缀（如 0.1.0-rc.6），避免显示时丢掉 -rc/-beta 造成版本误判。
 fn extract_version(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -224,9 +235,21 @@ fn extract_version(text: &str) -> Option<String> {
             while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
                 j += 1;
             }
-            let parts: Vec<&str> = text[start..j].split('.').collect();
+            let base = &text[start..j];
+            let parts: Vec<&str> = base.split('.').collect();
             if parts.len() >= 3 && !parts[..3].iter().any(|s| s.is_empty()) {
-                return Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]));
+                let mut token = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+                // 预发布后缀：0.1.0-rc.6 / 0.2.0-beta.1
+                if j < bytes.len() && bytes[j] == b'-' {
+                    let pstart = j;
+                    while j < bytes.len()
+                        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-' || bytes[j] == b'.')
+                    {
+                        j += 1;
+                    }
+                    token.push_str(&text[pstart..j]);
+                }
+                return Some(token);
             }
             i = j;
         } else {
@@ -248,13 +271,10 @@ async fn dsh_latest_version(app: &AppHandle) -> Option<String> {
 }
 
 /// 当前实际使用（下次启动将使用）的 DSH 版本：
-/// 已锁定 → 查询锁定版本本身；未锁定 → 查询 npx 解析的最新版。
+/// 手动模式且已锁定 → 查询锁定版本本身；否则 → 查询 npx 解析的最新版。
 async fn dsh_current_version(app: &AppHandle) -> Option<String> {
     let s = load_settings(app);
-    let pkg = match &s.dsh_version_locked {
-        Some(v) if !v.trim().is_empty() => format!("@deepseek-ai/dsh@{}", v.trim()),
-        _ => "@deepseek-ai/dsh".to_string(),
-    };
+    let pkg = dsh_effective_pkg(&s);
     let mut cmd = tokio::process::Command::new(resolve_npx(app));
     cmd.arg("--yes").arg(&pkg).arg("--version");
     apply_registry_env(&mut cmd, app);
@@ -272,9 +292,11 @@ struct DshVersionInfo {
     latest: Option<String>,
     /// 锁定版本（未锁定为 null）
     locked: Option<String>,
+    /// 更新模式：auto = 跟随最新；manual = 手动更新
+    update_mode: String,
 }
 
-/// 版本信息：当前使用 / 最新 / 锁定（设置页「DSH 运行时版本」卡片）
+/// 版本信息：当前使用 / 最新 / 锁定 / 更新模式（设置页「DSH 更新」卡片）
 #[tauri::command]
 async fn dsh_version_info(app: AppHandle) -> DshVersionInfo {
     let s = load_settings(&app);
@@ -284,11 +306,12 @@ async fn dsh_version_info(app: AppHandle) -> DshVersionInfo {
         current,
         latest,
         locked,
+        update_mode: s.dsh_update_mode,
     }
 }
 
 /// 锁定 / 解锁 DSH 版本：Some("x.y.z") 锁定；None 解锁（跟随最新）。
-/// 改动后需重启 DSH 生效（spawn 参数变化）。
+/// 仅在手动更新模式下有意义；改动后需重启 DSH 生效（spawn 参数变化）。
 #[tauri::command]
 fn set_dsh_version_lock(app: AppHandle, version: Option<String>) -> Result<Settings, String> {
     let mut s = load_settings(&app);
@@ -299,13 +322,44 @@ fn set_dsh_version_lock(app: AppHandle, version: Option<String>) -> Result<Setti
     Ok(s)
 }
 
-/// 构造要运行的 DSH npm 包参数：已锁定 → `@deepseek-ai/dsh@<ver>`，否则跟随最新
+/// 设置 DSH 更新模式：auto = 跟随最新（自动更新）；manual = 手动更新。
+/// 切到 auto 时自动解除版本锁定（跟随最新）。
+#[tauri::command]
+fn set_dsh_update_mode(app: AppHandle, mode: String) -> Result<Settings, String> {
+    let mode = mode.trim().to_string();
+    if mode != "auto" && mode != "manual" {
+        return Err(format!("❌ 未知更新模式: {}", mode));
+    }
+    let mut s = load_settings(&app);
+    s.dsh_update_mode = mode;
+    if s.dsh_update_mode == "auto" {
+        s.dsh_version_locked = None; // 自动更新 = 解除锁定，跟随最新
+    }
+    save_settings(&app, &s)?;
+    Ok(s)
+}
+
+/// 手动更新模式是否生效（auto 模式下锁定不生效，视为跟随最新）
+fn update_mode_manual(s: &Settings) -> bool {
+    s.dsh_update_mode == "manual"
+}
+
+/// 构造要运行的 DSH npm 包参数：
+/// 手动模式且已锁定 → `@deepseek-ai/dsh@<ver>`；否则（自动模式）→ 跟随最新。
+fn dsh_effective_pkg(s: &Settings) -> String {
+    if update_mode_manual(s) {
+        if let Some(v) = s.dsh_version_locked.as_deref() {
+            if !v.trim().is_empty() {
+                return format!("@deepseek-ai/dsh@{}", v.trim());
+            }
+        }
+    }
+    "@deepseek-ai/dsh".to_string()
+}
+
 fn dsh_pkg_arg(app: &AppHandle) -> String {
     let s = load_settings(app);
-    match &s.dsh_version_locked {
-        Some(v) if !v.trim().is_empty() => format!("@deepseek-ai/dsh@{}", v.trim()),
-        _ => "@deepseek-ai/dsh".to_string(),
-    }
+    dsh_effective_pkg(&s)
 }
 
 /// 当前 DSH web 的主题 / 语言偏好快照（供壳 UI 与其双向同步）
@@ -2195,6 +2249,7 @@ fn main() {
             set_close_with_app,
             dsh_version_info,
             set_dsh_version_lock,
+            set_dsh_update_mode,
             dsh_settings_snapshot,
             dsh_settings_set,
             dsh_settings_subscribe,

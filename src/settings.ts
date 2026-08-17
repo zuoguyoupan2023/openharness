@@ -1,5 +1,5 @@
-// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 版本）
-import { restartDsh, getDshVersionInfo, setDshVersionLock } from "./dsh";
+// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 更新）
+import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
@@ -179,24 +179,32 @@ export function initSettings(): void {
   // 语言变化后重新同步语言单选（设置页本身不重渲染，保持选中态）
   window.addEventListener("lang-changed", syncLangRadios);
 
-  // ===== DSH 运行时版本（版本检查 / 锁定 / 解锁） =====
+  // ===== DSH 更新（更新模式 / 版本检查 / 手动更新按钮） =====
   const versionCurrent = document.getElementById("version-current") as HTMLSpanElement | null;
   const versionLatest = document.getElementById("version-latest") as HTMLSpanElement | null;
   const versionLocked = document.getElementById("version-locked") as HTMLSpanElement | null;
-  const versionLockBtn = document.getElementById("version-lock") as HTMLButtonElement | null;
-  const versionUnlockBtn = document.getElementById("version-unlock") as HTMLButtonElement | null;
+  const versionLockedLine = document.getElementById("version-locked-line") as HTMLElement | null;
+  const versionUpdateBtn = document.getElementById("version-update") as HTMLButtonElement | null;
   const versionRefreshBtn = document.getElementById("version-refresh") as HTMLButtonElement | null;
   const versionSaved = document.getElementById("version-saved") as HTMLSpanElement | null;
+  const modeRadios = document.getElementsByName("dsh-update-mode") as NodeListOf<HTMLInputElement>;
 
-  // 简单版本比较："0.24.2" → [0,24,2]；a > b 返回 1 / 相等 0 / 小于 -1
-  const cmpVersion = (a: string, b: string): number => {
-    const pa = a.split(".").map((s) => parseInt(s, 10) || 0);
-    const pb = b.split(".").map((s) => parseInt(s, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const d = (pa[i] || 0) - (pb[i] || 0);
+  // semver 比较（含预发布）：先比 base 三段数字；base 相等时正式版 > 预发布（0.1.0 > 0.1.0-rc.6）
+  const cmpSemver = (a: string, b: string): number => {
+    const preA = a.split("+")[0].split("-");
+    const preB = b.split("+")[0].split("-");
+    const baseA = preA[0].split(".").map((n) => parseInt(n, 10) || 0);
+    const baseB = preB[0].split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(baseA.length, baseB.length); i++) {
+      const d = (baseA[i] || 0) - (baseB[i] || 0);
       if (d !== 0) return d > 0 ? 1 : -1;
     }
-    return 0;
+    const ra = preA.length > 1 ? preA[1] : "";
+    const rb = preB.length > 1 ? preB[1] : "";
+    if (ra === rb) return 0;
+    if (ra === "") return 1; // 正式版 > 预发布
+    if (rb === "") return -1;
+    return ra < rb ? -1 : 1;
   };
 
   const verSet = (
@@ -218,28 +226,44 @@ export function initSettings(): void {
     }
   };
 
+  // 当前模式与版本状态（loadVersionInfo 填充）
+  let curMode: "auto" | "manual" = "auto";
+  let curVersion: string | null = null;
+
+  const syncModeUI = (): void => {
+    modeRadios.forEach((r) => {
+      r.checked = r.value === curMode;
+    });
+    const manual = curMode === "manual";
+    if (versionLockedLine) versionLockedLine.hidden = !manual;
+    if (versionUpdateBtn) versionUpdateBtn.hidden = !manual;
+  };
+
   async function loadVersionInfo(): Promise<void> {
     verSet(versionCurrent, t("settings.version.checking"), "muted");
     verSet(versionLatest, "…", "muted");
     verSet(versionLocked, t("settings.version.checking"), "muted");
-    if (versionLockBtn) versionLockBtn.disabled = true;
-    if (versionUnlockBtn) versionUnlockBtn.disabled = true;
     let current: string | null = null;
     let locked: string | null = null;
     try {
       const info = await getDshVersionInfo();
       current = info.current;
       locked = info.locked;
+      curVersion = current;
+      curMode = info.updateMode === "manual" ? "manual" : "auto";
       verSet(
         versionCurrent,
         current ? "v" + current : t("settings.version.failed"),
         current ? "" : "muted"
       );
       if (info.latest) {
-        const upToDate = current === info.latest || (current !== null && cmpVersion(current, info.latest) >= 0);
+        const upToDate =
+          current !== null && info.latest !== null && cmpSemver(current, info.latest) >= 0;
         verSet(
           versionLatest,
-          "v" + info.latest + (upToDate ? "（" + t("settings.version.upToDate") + "）" : "（" + t("settings.version.outdated") + "）"),
+          "v" +
+            info.latest +
+            (upToDate ? "（" + t("settings.version.upToDate") + "）" : "（" + t("settings.version.outdated") + "）"),
           upToDate ? "good" : "warn"
         );
       } else {
@@ -247,7 +271,7 @@ export function initSettings(): void {
       }
       verSet(
         versionLocked,
-        locked ? t("settings.version.lockedFmt", { v: locked }) : t("settings.version.unlocked"),
+        locked ? t("settings.version.lockedFmt", { v: locked }) : "—",
         locked ? "good" : "muted"
       );
     } catch {
@@ -255,39 +279,71 @@ export function initSettings(): void {
       verSet(versionLatest, "—", "muted");
       verSet(versionLocked, "—", "muted");
     }
-    // 按钮可用性：可锁定 = 当前版本可查且未锁该版本；可解锁 = 已锁定
-    if (versionLockBtn) versionLockBtn.disabled = !current || current === locked;
-    if (versionUnlockBtn) versionUnlockBtn.disabled = !locked;
+    syncModeUI();
+    if (versionUpdateBtn) versionUpdateBtn.disabled = !current;
   }
 
-  if (versionLockBtn) {
-    versionLockBtn.addEventListener("click", async () => {
-      let cur: string | null = null;
+  // 更新模式切换：manual 需锁定当前版本；auto 由后端自动解锁
+  modeRadios.forEach((r) => {
+    r.addEventListener("change", async () => {
+      if (!r.checked) return;
+      if (r.value === "manual") {
+        try {
+          await setDshUpdateMode("manual");
+          let lockedVer = curVersion;
+          if (!curVersion) {
+            const info = await getDshVersionInfo();
+            lockedVer = info.current;
+            curVersion = info.current;
+          }
+          if (lockedVer) {
+            await setDshVersionLock(lockedVer);
+            verMsg(t("settings.version.modeManualSaved", { v: lockedVer }));
+          } else {
+            verMsg(t("settings.version.failed"));
+          }
+          curMode = "manual";
+        } catch (e) {
+          verMsg(t("settings.version.errSave") + String(e));
+        }
+      } else {
+        try {
+          await setDshUpdateMode("auto");
+          curMode = "auto";
+          verMsg(t("settings.version.modeAutoSaved"));
+        } catch (e) {
+          verMsg(t("settings.version.errSave") + String(e));
+        }
+      }
+      syncModeUI();
+      void loadVersionInfo();
+    });
+  });
+
+  // 手动模式：更新到最新版（锁定最新 → 重启 DSH 生效）
+  if (versionUpdateBtn) {
+    versionUpdateBtn.addEventListener("click", async () => {
+      let latest: string | null = null;
       try {
         const info = await getDshVersionInfo();
-        cur = info.current;
+        latest = info.latest;
       } catch (e) {
         verMsg(t("settings.version.errSave") + String(e));
         return;
       }
-      if (!cur) {
+      if (!latest) {
         verMsg(t("settings.version.failed"));
         return;
       }
-      try {
-        await setDshVersionLock(cur);
-        verMsg(t("settings.version.lockSaved"));
-      } catch (e) {
-        verMsg(t("settings.version.errSave") + String(e));
+      if (curVersion && cmpSemver(curVersion, latest) >= 0) {
+        verMsg(t("settings.version.upToDate"));
+        return;
       }
-      void loadVersionInfo();
-    });
-  }
-  if (versionUnlockBtn) {
-    versionUnlockBtn.addEventListener("click", async () => {
       try {
-        await setDshVersionLock(null);
-        verMsg(t("settings.version.unlockSaved"));
+        await setDshVersionLock(latest);
+        verMsg(t("settings.version.updating", { latest }));
+        await restartDsh();
+        verMsg(t("settings.version.updated", { latest }));
       } catch (e) {
         verMsg(t("settings.version.errSave") + String(e));
       }
@@ -297,6 +353,10 @@ export function initSettings(): void {
   if (versionRefreshBtn) {
     versionRefreshBtn.addEventListener("click", () => void loadVersionInfo());
   }
-  // 初始化时异步加载版本信息（设置页打开即显示）
-  void loadVersionInfo();
+  // 初始化：恢复上次选择的更新模式 + 异步加载版本信息
+  void getSettings().then((s) => {
+    curMode = s.dshUpdateMode === "manual" ? "manual" : "auto";
+    syncModeUI();
+    void loadVersionInfo();
+  });
 }
