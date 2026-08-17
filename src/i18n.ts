@@ -97,10 +97,6 @@ const DICT: Record<string, Entry> = {
 
   // ===== 插件中心 =====
   "plugins.title": { zh: "插件中心", en: "Plugin Center" },
-  "plugins.titleBadge": {
-    zh: "安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成",
-    en: "Install / Update / Remove / restart to apply · plugin config lives in dsh web",
-  },
   "plugins.refresh": { zh: "刷新插件索引", en: "Refresh index" },
   "plugins.search": { zh: "搜索插件名称 / 描述…", en: "Search plugins by name / description…" },
   "plugins.installedTitle": { zh: "已安装（web profile）", en: "Installed (web profile)" },
@@ -182,6 +178,8 @@ const DICT: Record<string, Entry> = {
   "cmdPalette.actionsSection": { zh: "操作", en: "Actions" },
   "cmdPalette.registrySection": { zh: "插件", en: "Plugins" },
   "cmdPalette.npmSection": { zh: "npm 包", en: "npm packages" },
+  "cmdPalette.gotoMarket": { zh: "打开插件市场", en: "Open marketplace" },
+  "cmdPalette.gotoInstalled": { zh: "查看已安装插件", en: "View installed plugins" },
   "cmdPalette.gotoGithub": { zh: "打开 GitHub 插件市场", en: "Open GitHub marketplace" },
   "cmdPalette.gotoNpm": { zh: "打开 npm 搜索", en: "Open npm search" },
   "cmdPalette.gotoLocal": { zh: "打开本地安装", en: "Open local install" },
@@ -247,6 +245,10 @@ const DICT: Record<string, Entry> = {
   "plugins.loadAll": { zh: "已全部加载（共 {n} 条）", en: "All loaded ({n} total)" },
 
   // ===== P1 信息架构（主 tabs / 二级视图 / 筛选 / 排序 / 推荐 / 本地 / npm 键盘） =====
+  // 主 tabs：插件市场 / 已安装 / DSH官方插件
+  "plugins.tab.market": { zh: "插件市场", en: "Marketplace" },
+  "plugins.tab.installed": { zh: "已安装", en: "Installed" },
+  "plugins.tab.official": { zh: "DSH官方插件", en: "DSH Official" },
   "plugins.tab.github": { zh: "GitHub", en: "GitHub" },
   "plugins.tab.npm": { zh: "npm", en: "npm" },
   "plugins.tab.local": { zh: "本地", en: "Local" },
@@ -272,7 +274,6 @@ const DICT: Record<string, Entry> = {
   "plugins.searchGithub": { zh: "搜索 GitHub 插件…", en: "Search GitHub plugins…" },
   "plugins.searchNpm": { zh: "按 npm 包名搜索并一键安装，如 dsh-theme-center", en: "Search & install by npm package name, e.g. dsh-theme-center" },
   "plugins.searchLocal": { zh: "本地插件路径：/abs/plugin.tgz 或 ./本地目录，Enter 安装", en: "Local plugin path: /abs/plugin.tgz or ./my-plugin, Enter to install" },
-  "plugins.officialQuick": { zh: "⚡ 官方组合包", en: "⚡ Official bundles" },
   "plugins.npmSearchGo": { zh: "搜索", en: "Search" },
   "plugins.localPickDirShort": { zh: "选择目录", en: "Pick folder" },
   "plugins.localPickTgz": { zh: "选择 .tgz", en: "Pick .tgz" },

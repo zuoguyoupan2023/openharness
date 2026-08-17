@@ -1130,6 +1130,18 @@
     }
     .main-tab:hover { background: var(--hover); color: var(--text-bright); }
     .main-tab.active { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    /* 插件市场内部的来源子标签（GitHub / npm / 本地）：弱化层级，区别于主标签 */
+    .sub-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+    .sub-tab {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--card-2); border: 1px solid var(--border-strong);
+      color: var(--text-dim); padding: 4px 14px; border-radius: 8px;
+      font-size: 0.8rem; cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .sub-tab:hover { background: var(--hover); color: var(--text-bright); }
+    .sub-tab.active { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    .sub-tab svg { font-size: 0.9em; }
     .plugin-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
     .plugin-local-btns { display: inline-flex; gap: 6px; }
     .toolbar-search {
@@ -1144,12 +1156,6 @@
       color: var(--text); border-radius: 8px; padding: 5px 8px;
       font-size: 0.78rem; font-family: inherit; outline: none; cursor: pointer;
     }
-    .official-quick {
-      margin: 2px 0 6px;
-      background: var(--card); border: 1px dashed var(--accent-border) !important;
-      color: var(--link); font-weight: 600;
-    }
-    .official-quick:hover { background: var(--hover); }
     .plugin-index-info {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
       color: var(--text-faint); font-size: 0.72rem; padding: 2px 0 6px;
@@ -1535,86 +1541,96 @@
       <div class="section-title">
         <span class="ticon"><i data-icon="puzzle"></i></span>
         <span data-i18n="plugins.title">插件中心</span>
-        <span class="badge" data-i18n="plugins.titleBadge">安装 / 更新 / 卸载 / 重启生效 · 插件配置在 dsh web 内完成</span>
       </div>
-      <div class="section-title">
-        <span class="ticon"><i data-icon="circle-check"></i></span>
-        <span data-i18n="plugins.installedTitle">已安装（web profile）</span>
-        <span class="badge" id="profile-path"></span>
-        <button id="plugins-update-all" class="btn-icon link-btn" hidden></button>
-      </div>
-      <div class="installed-chips" id="installed-chips"></div>
 
-      <!-- P1-5 官方组合包全局快捷入口：点击切到 npm tab 官方分区 -->
-      <button id="official-quick" class="official-quick btn-icon link-btn" data-i18n="plugins.officialQuick">⚡ 官方组合包</button>
-
-      <!-- 主 tabs：GitHub | npm | 本地（默认 GitHub） -->
+      <!-- 主 tabs：插件市场 | 已安装 | DSH官方插件 -->
       <div id="plugin-main-tabs" class="main-tabs" role="tablist"></div>
 
-      <!-- 共享工具栏：一个搜索框，随主 tab 切换语义 -->
-      <div class="plugin-toolbar">
-        <input id="plugins-search" class="toolbar-search" spellcheck="false" autocomplete="off" />
-        <button id="plugins-search-go" class="btn-icon add-btn" hidden>
-          <i data-icon="search"></i><span data-i18n="plugins.npmSearchGo">搜索</span>
-        </button>
-        <span id="plugins-local-btns" class="plugin-local-btns" hidden>
-          <button id="local-dir-btn" class="btn-icon link-btn"><i data-icon="folder-open"></i><span data-i18n="plugins.localPickDirShort">选择目录</span></button>
-          <button id="local-tgz-btn" class="btn-icon link-btn"><i data-icon="package"></i><span data-i18n="plugins.localPickTgz">选择 .tgz</span></button>
-        </span>
-        <select id="plugin-filter-mode" class="toolbar-select" hidden></select>
-        <select id="plugin-sort-mode" class="toolbar-select" hidden></select>
-        <button id="plugins-refresh" class="btn-icon link-btn" hidden>
-          <i data-icon="refresh-cw"></i>
-          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
-        </button>
-      </div>
+      <!-- ① 插件市场面板：GitHub / npm / 本地 三个来源子标签 -->
+      <div id="plugin-market-panel">
+        <!-- 子 tabs：GitHub | npm | 本地 -->
+        <div id="plugin-sub-tabs" class="sub-tabs" role="tablist"></div>
 
-      <!-- GitHub 面板：二级视图（awesome/topics/全部/特别推荐）+ 分类 + 索引信息 + 表格 -->
-      <div id="plugin-github-panel">
-        <div id="plugin-github-views" class="source-tabs" role="tablist"></div>
-        <div id="plugin-cats" class="plugin-cats"></div>
-        <div id="plugin-index-info" class="plugin-index-info" hidden>
-          <span id="plugin-index-meta"></span>
-          <span class="badge" id="plugin-count">-</span>
+        <!-- 共享工具栏：一个搜索框，随子 tab 切换语义 -->
+        <div class="plugin-toolbar">
+          <input id="plugins-search" class="toolbar-search" spellcheck="false" autocomplete="off" />
+          <button id="plugins-search-go" class="btn-icon add-btn" hidden>
+            <i data-icon="search"></i><span data-i18n="plugins.npmSearchGo">搜索</span>
+          </button>
+          <span id="plugins-local-btns" class="plugin-local-btns" hidden>
+            <button id="local-dir-btn" class="btn-icon link-btn"><i data-icon="folder-open"></i><span data-i18n="plugins.localPickDirShort">选择目录</span></button>
+            <button id="local-tgz-btn" class="btn-icon link-btn"><i data-icon="package"></i><span data-i18n="plugins.localPickTgz">选择 .tgz</span></button>
+          </span>
+          <select id="plugin-filter-mode" class="toolbar-select" hidden></select>
+          <select id="plugin-sort-mode" class="toolbar-select" hidden></select>
+          <button id="plugins-refresh" class="btn-icon link-btn" hidden>
+            <i data-icon="refresh-cw"></i>
+            <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+          </button>
         </div>
-        <div id="plugin-loading" class="plugin-loading"></div>
-        <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
-        <table class="plugin-table" id="plugin-table" style="display:none;">
-          <thead>
-            <tr>
-              <th data-i18n="plugins.col.name">插件</th>
-              <th data-i18n="plugins.col.desc">描述</th>
-              <th data-i18n="plugins.col.version">版本</th>
-              <th data-i18n="plugins.col.stars">★ Stars</th>
-              <th data-i18n="plugins.col.source">来源</th>
-              <th data-i18n="plugins.col.status">状态</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="plugin-tbody"></tbody>
-        </table>
-        <div id="plugin-table-more" class="plugin-table-more" hidden></div>
+
+        <!-- GitHub 子面板：二级视图（awesome/topics/全部/特别推荐）+ 分类 + 索引信息 + 表格 -->
+        <div id="plugin-github-panel">
+          <div id="plugin-github-views" class="source-tabs" role="tablist"></div>
+          <div id="plugin-cats" class="plugin-cats"></div>
+          <div id="plugin-index-info" class="plugin-index-info" hidden>
+            <span id="plugin-index-meta"></span>
+            <span class="badge" id="plugin-count">-</span>
+          </div>
+          <div id="plugin-loading" class="plugin-loading"></div>
+          <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
+          <table class="plugin-table" id="plugin-table" style="display:none;">
+            <thead>
+              <tr>
+                <th data-i18n="plugins.col.name">插件</th>
+                <th data-i18n="plugins.col.desc">描述</th>
+                <th data-i18n="plugins.col.version">版本</th>
+                <th data-i18n="plugins.col.stars">★ Stars</th>
+                <th data-i18n="plugins.col.source">来源</th>
+                <th data-i18n="plugins.col.status">状态</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="plugin-tbody"></tbody>
+          </table>
+          <div id="plugin-table-more" class="plugin-table-more" hidden></div>
+        </div>
+
+        <!-- npm 子面板：仅 npm 搜索结果（官方组合包已移至「DSH官方插件」页） -->
+        <div id="plugin-npm-panel" hidden>
+          <div id="plugins-npm-results" class="npm-results" role="listbox" hidden></div>
+        </div>
+
+        <!-- 本地子面板：安装入口 + 本地已安装（file:/link:）列表 -->
+        <div id="plugin-local-panel" hidden>
+          <div id="local-error" class="local-error" hidden></div>
+          <div class="section-title">
+            <span class="ticon"><i data-icon="folder-open"></i></span>
+            <span data-i18n="plugins.localInstalledTitle">本地已安装（file:/link:）</span>
+          </div>
+          <div id="local-installed-list" class="local-installed-list"></div>
+        </div>
       </div>
 
-      <!-- npm 面板：官方组合包固定分区 + npm 搜索结果 -->
-      <div id="plugin-npm-panel" hidden>
+      <!-- ② 已安装面板：profile 路径 + 全部更新 + 已安装 chips -->
+      <div id="plugin-installed-panel" hidden>
+        <div class="section-title">
+          <span class="ticon"><i data-icon="circle-check"></i></span>
+          <span data-i18n="plugins.installedTitle">已安装（web profile）</span>
+          <span class="badge" id="profile-path"></span>
+          <button id="plugins-update-all" class="btn-icon link-btn" hidden></button>
+        </div>
+        <div class="installed-chips" id="installed-chips"></div>
+      </div>
+
+      <!-- ③ DSH官方插件面板：官方组合包 -->
+      <div id="plugin-official-panel" hidden>
         <div class="section-title">
           <span class="ticon"><i data-icon="package"></i></span>
           <span data-i18n="plugins.officialTitle">官方组合包</span>
           <span class="badge" data-i18n="plugins.officialBadge">@deepseek-ai 核心包</span>
         </div>
         <div class="official-grid" id="official-grid"></div>
-        <div id="plugins-npm-results" class="npm-results" role="listbox" hidden></div>
-      </div>
-
-      <!-- 本地面板：安装入口 + 本地已安装（file:/link:）列表 -->
-      <div id="plugin-local-panel" hidden>
-        <div id="local-error" class="local-error" hidden></div>
-        <div class="section-title">
-          <span class="ticon"><i data-icon="folder-open"></i></span>
-          <span data-i18n="plugins.localInstalledTitle">本地已安装（file:/link:）</span>
-        </div>
-        <div id="local-installed-list" class="local-installed-list"></div>
       </div>
     </section>
 

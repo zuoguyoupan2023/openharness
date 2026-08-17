@@ -211,6 +211,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
     search: $("plugins-search") as HTMLInputElement, // 共享搜索框（随主 tab 切换语义）
     searchGo: $("plugins-search-go") as HTMLButtonElement,
     mainTabs: $("plugin-main-tabs"),
+    subTabs: $("plugin-sub-tabs") as HTMLElement,
+    marketPanel: $("plugin-market-panel"),
+    installedPanel: $("plugin-installed-panel"),
+    officialPanel: $("plugin-official-panel"),
     githubViews: $("plugin-github-views"),
     cats: $("plugin-cats"),
     chips: $("installed-chips"),
@@ -236,25 +240,28 @@ export function initPlugins(opts: PluginCenterOptions): void {
     githubPanel: $("plugin-github-panel"),
     npmPanel: $("plugin-npm-panel"),
     localPanel: $("plugin-local-panel"),
-    officialQuick: $("official-quick") as HTMLButtonElement,
   };
 
-  // —— P1 信息架构状态（013 已确认：主 tab 默认 GitHub，GitHub 二级默认 awesome）——
-  type MainTab = "github" | "npm" | "local";
+  // —— 插件页信息架构状态 ——
+  // 主 tabs：插件市场 / 已安装 / DSH官方插件；插件市场内部再分子 tabs：GitHub / npm / 本地（默认 GitHub）
+  type MainTab = "market" | "installed" | "official";
+  type SubTab = "github" | "npm" | "local";
   type GithubView = "awesome" | "topics" | "all" | "recommended";
   type FilterMode = "all" | "installed" | "updatable" | "notinstalled";
   type SortMode = "default" | "stars" | "updated" | "name";
-  let mainTab: MainTab = "github";
+  let mainTab: MainTab = "market";
+  let subTab: SubTab = "github";
   let githubView: GithubView = "awesome";
   let filterMode: FilterMode = "all";
   let sortMode: SortMode = "default";
   let filterCat = "";
   let filterText = "";
 
-  // —— P2：UI 状态持久化（013 §P2：主 tab / 二级视图 / 分类 / 筛选 / 排序 / 搜索 / 滚动位置 localStorage 重启恢复）——
+  // —— UI 状态持久化（主 tab / 子 tab / 二级视图 / 分类 / 筛选 / 排序 / 搜索 / 滚动位置 localStorage 重启恢复）——
   const UI_STATE_KEY = "dsh-plugins-ui-state";
   interface UiState {
     mainTab: MainTab;
+    subTab: SubTab;
     githubView: GithubView;
     filterCat: string;
     filterMode: FilterMode;
@@ -265,13 +272,14 @@ export function initPlugins(opts: PluginCenterOptions): void {
   const isOneOf = <T extends string>(v: string | undefined, arr: readonly T[]): v is T =>
     !!v && (arr as readonly string[]).includes(v);
   const readUiState = (): UiState => {
-    const def: UiState = { mainTab: "github", githubView: "awesome", filterCat: "", filterMode: "all", sortMode: "default", filterText: "", scrollTop: 0 };
+    const def: UiState = { mainTab: "market", subTab: "github", githubView: "awesome", filterCat: "", filterMode: "all", sortMode: "default", filterText: "", scrollTop: 0 };
     try {
       const raw = localStorage.getItem(UI_STATE_KEY);
       if (!raw) return def;
       const s = JSON.parse(raw) as Partial<UiState>;
       return {
-        mainTab: isOneOf(s.mainTab, ["github", "npm", "local"] as const) ? s.mainTab : def.mainTab,
+        mainTab: isOneOf(s.mainTab, ["market", "installed", "official"] as const) ? s.mainTab : def.mainTab,
+        subTab: isOneOf(s.subTab, ["github", "npm", "local"] as const) ? s.subTab : def.subTab,
         githubView: isOneOf(s.githubView, ["awesome", "topics", "all", "recommended"] as const) ? s.githubView : def.githubView,
         filterCat: typeof s.filterCat === "string" ? s.filterCat : "",
         filterMode: isOneOf(s.filterMode, ["all", "installed", "updatable", "notinstalled"] as const) ? s.filterMode : def.filterMode,
@@ -287,6 +295,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const v = document.getElementById("view-plugins");
     const state: UiState = {
       mainTab,
+      subTab,
       githubView,
       filterCat,
       filterMode,
@@ -302,6 +311,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   };
   const savedState = readUiState();
   mainTab = savedState.mainTab;
+  subTab = savedState.subTab;
   githubView = savedState.githubView;
   filterCat = savedState.filterCat;
   filterMode = savedState.filterMode;
@@ -503,16 +513,17 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
-  /** P1-4：已安装 chip 点击 → 跳到对应来源 tab 并展开详情 / 搜索该包 */
+  /** P1-4：已安装 chip 点击 → 跳到对应来源（子 tab）并展开详情 / 搜索该包 */
   function chipOpenDetail(name: string, spec: string | undefined): void {
     const pkg = pkgNameOf(name);
+    if (mainTab !== "market") switchMainTab("market"); // 主 tab 层先回到「插件市场」
     if (/^(file:|link:)/.test(spec || "")) {
-      switchMainTab("local"); // 本地 → 本地 tab（列表可见）
+      switchSubTab("local"); // 本地 → 本地子 tab（列表可见）
       return;
     }
     if (/^(github:|git\+)/.test(spec || "")) {
       // GitHub → 「全部」视图 + 搜索该包 + 定位展开
-      switchMainTab("github");
+      switchSubTab("github");
       githubView = "all";
       filterCat = "";
       filterText = pkg;
@@ -525,8 +536,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
       locateAndOpen(pkg);
       return;
     }
-    // npm → 切到 npm tab 并搜索该包（结果行内可展开详情）
-    switchMainTab("npm");
+    // npm → 切到 npm 子 tab 并搜索该包（结果行内可展开详情）
+    switchSubTab("npm");
     els.search.value = pkg;
     void runNpmSearch();
   }
@@ -540,13 +551,13 @@ export function initPlugins(opts: PluginCenterOptions): void {
     if (p) toggleDetail(tr, p);
   }
 
-  // —— 主 tabs（GitHub / npm / 本地，默认 GitHub，已确认 2026-08-17）——
+  // —— 主 tabs（插件市场 / 已安装 / DSH官方插件）——
   function renderMainTabs(): void {
     els.mainTabs.innerHTML = "";
     const tabs: Array<[MainTab, string, string]> = [
-      ["github", "plugins.tab.github", "github"],
-      ["npm", "plugins.tab.npm", "package"],
-      ["local", "plugins.tab.local", "folder-open"],
+      ["market", "plugins.tab.market", "boxes"],
+      ["installed", "plugins.tab.installed", "circle-check"],
+      ["official", "plugins.tab.official", "package"],
     ];
     for (const [id, key, icon] of tabs) {
       const b = document.createElement("button");
@@ -559,40 +570,88 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
-  /** 切换主 tab：切换面板 / 搜索框语义 / 工具栏可见性 */
+  /** 切换主 tab：切换 插件市场 / 已安装 / DSH官方插件 三个面板 */
   function switchMainTab(next: MainTab): void {
     if (mainTab === next) return;
     mainTab = next;
     renderMainTabs();
+    els.marketPanel.hidden = mainTab !== "market";
+    els.installedPanel.hidden = mainTab !== "installed";
+    els.officialPanel.hidden = mainTab !== "official";
+    if (mainTab === "market") {
+      // 回到市场：恢复当前子 tab 视图（子 tab 状态独立于主 tab）
+      renderSubTabs();
+      refreshToolbarVisibility();
+      renderActiveSubPanel();
+    } else if (mainTab === "installed") {
+      void loadInstalled();
+      renderUpdateAllBtn();
+    } else {
+      renderOfficial();
+    }
+    const v = document.getElementById("view-plugins");
+    if (v) v.scrollTop = 0;
+    saveUiState(); // 主 tab 变更即持久化
+  }
+
+  // —— 插件市场内的来源子 tabs（GitHub / npm / 本地）——
+  function renderSubTabs(): void {
+    els.subTabs.innerHTML = "";
+    const tabs: Array<[SubTab, string, string]> = [
+      ["github", "plugins.tab.github", "github"],
+      ["npm", "plugins.tab.npm", "package"],
+      ["local", "plugins.tab.local", "folder-open"],
+    ];
+    for (const [id, key, icon] of tabs) {
+      const b = document.createElement("button");
+      b.className = "sub-tab" + (subTab === id ? " active" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(subTab === id));
+      b.innerHTML = `${iconSvg(icon)}<span>${t(key)}</span>`;
+      b.addEventListener("click", () => switchSubTab(id));
+      els.subTabs.appendChild(b);
+    }
+  }
+
+  /** 切换子 tab：切换 GitHub / npm / 本地 面板 + 搜索框语义 + 工具栏可见性 */
+  function switchSubTab(next: SubTab): void {
+    if (subTab === next) return;
+    subTab = next;
+    renderSubTabs();
     refreshToolbarVisibility();
-    els.githubPanel.hidden = mainTab !== "github";
-    els.npmPanel.hidden = mainTab !== "npm";
-    els.localPanel.hidden = mainTab !== "local";
+    renderActiveSubPanel();
+    saveUiState(); // 子 tab 变更即持久化
+  }
+
+  /** 渲染当前子 tab 对应的面板内容（切子 tab 与回市场主 tab 时共用） */
+  function renderActiveSubPanel(): void {
+    els.githubPanel.hidden = subTab !== "github";
+    els.npmPanel.hidden = subTab !== "npm";
+    els.localPanel.hidden = subTab !== "local";
     els.search.placeholder =
-      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
-    if (mainTab === "github") {
+      subTab === "github" ? t("plugins.searchGithub") : subTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
+    if (subTab === "github") {
       renderGithubViews();
       renderCategories();
       renderTable(true);
       renderIndexInfo();
       const v = document.getElementById("view-plugins");
       if (v) v.scrollTop = 0;
-    } else if (mainTab === "npm") {
+    } else if (subTab === "npm") {
       closeNpmResults();
     } else {
       renderLocalInstalled();
       hideLocalError();
     }
-    saveUiState(); // P2：主 tab 变更即持久化
   }
 
-  /** 工具栏可见性：共享搜索框常显；搜索/本地按钮/筛选/排序/刷新随主 tab 切换 */
+  /** 工具栏可见性：共享搜索框常显；搜索/本地按钮/筛选/排序/刷新随子 tab 切换 */
   function refreshToolbarVisibility(): void {
-    els.searchGo.hidden = mainTab !== "npm";
-    els.localBtns.hidden = mainTab !== "local";
-    els.filterMode.hidden = mainTab !== "github";
-    els.sortMode.hidden = mainTab !== "github";
-    els.refresh.hidden = mainTab !== "github";
+    els.searchGo.hidden = subTab !== "npm";
+    els.localBtns.hidden = subTab !== "local";
+    els.filterMode.hidden = subTab !== "github";
+    els.sortMode.hidden = subTab !== "github";
+    els.refresh.hidden = subTab !== "github";
   }
 
   // —— GitHub 二级视图（awesome / topics / 全部 / 特别推荐）——
@@ -1659,7 +1718,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   // ===== P2 版本列按需加载（013 §P2：只给已渲染（可视+即将可视）且版本缺失的 npm 行拉取；重渲染后旧批次作废 = 中断离屏请求） =====
   async function loadVisibleVersions(): Promise<void> {
-    if (mainTab !== "github" || visibleVerBusy) return;
+    if (subTab !== "github" || visibleVerBusy) return;
     const batch = ++visibleVerSeq;
     const todo: string[] = [];
     els.tbody.querySelectorAll<HTMLTableRowElement>("tr.plugin-row").forEach((tr) => {
@@ -1916,19 +1975,19 @@ export function initPlugins(opts: PluginCenterOptions): void {
       })
     );
   });
-  // ===== 共享搜索框（P1-1：一个输入框，随主 tab 切换语义：GitHub 过滤 / npm 实时搜索 / 本地路径）=====
+  // ===== 共享搜索框（一个输入框，随子 tab 切换语义：GitHub 过滤 / npm 实时搜索 / 本地路径）=====
   let searchTimer = 0;
   els.search.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
-    const delay = mainTab === "npm" ? 400 : 150;
+    const delay = subTab === "npm" ? 400 : 150;
     searchTimer = window.setTimeout(() => {
-      if (mainTab === "github") {
+      if (subTab === "github") {
         filterText = els.search.value;
         renderTable(true);
         const v = document.getElementById("view-plugins");
         if (v) v.scrollTop = 0;
-        saveUiState(); // P2：搜索词持久化
-      } else if (mainTab === "npm") {
+        saveUiState(); // 搜索词持久化
+      } else if (subTab === "npm") {
         void runNpmSearch();
       } else {
         renderLocalInstalled();
@@ -1937,7 +1996,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   });
   els.searchGo.addEventListener("click", () => void runNpmSearch());
   els.search.addEventListener("keydown", (ev) => {
-    if (mainTab === "npm") {
+    if (subTab === "npm") {
       if (ev.key === "ArrowDown") {
         ev.preventDefault();
         moveNpmHighlight(1);
@@ -1951,7 +2010,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       } else if (ev.key === "Escape") {
         closeNpmResults();
       }
-    } else if (mainTab === "local" && ev.key === "Enter") {
+    } else if (subTab === "local" && ev.key === "Enter") {
       ev.preventDefault();
       doLocalInstall(els.search.value);
     }
@@ -2072,9 +2131,9 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
-  // npm 结果：点击页面其它区域关闭（P1-3）
+  // npm 结果：点击页面其它区域关闭
   document.addEventListener("click", (ev) => {
-    if (mainTab !== "npm" || els.npmResults.hidden) return;
+    if (subTab !== "npm" || els.npmResults.hidden) return;
     const t = ev.target as HTMLElement | null;
     if (t && (t.closest("#plugins-npm-results") || t.closest("#plugins-search") || t.closest("#plugins-search-go"))) return;
     closeNpmResults();
@@ -2083,13 +2142,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   // P0-6：全部更新（批量执行，只重启一次 DSH）
   document.getElementById("plugins-update-all")?.addEventListener("click", () => updateAllUpdatable());
 
-  // P1-5：官方组合包全局快捷入口 → 切到 npm tab 官方分区
-  els.officialQuick.addEventListener("click", () => {
-    if (mainTab !== "npm") switchMainTab("npm");
-    els.official.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
-
-  // P2：滚动位置 250ms 防抖保存（重启恢复）
+  // 滚动位置 250ms 防抖保存（重启恢复）
   let scrollSaveTimer = 0;
   document.getElementById("view-plugins")?.addEventListener(
     "scroll",
@@ -2120,7 +2173,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   function renderIndexInfo(): void {
     const wrap = document.getElementById("plugin-index-info");
     if (!wrap || !els.indexMeta) return;
-    wrap.hidden = mainTab !== "github";
+    wrap.hidden = subTab !== "github";
     els.indexMeta.textContent = t("plugins.indexInfo", {
       src: t(`plugins.snapshot.src.${snapshotSource}`),
       at: snapshot.generated_at ? snapshot.generated_at.slice(0, 16).replace("T", " ") : "—",
@@ -2135,7 +2188,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   let palTimer = 0;
   let palHighlight = -1;
   interface PalItem {
-    kind: "goto-github" | "goto-npm" | "goto-local" | "official" | "refresh" | "update-all" | "entry" | "npm" | "path";
+    kind: "goto-market" | "goto-installed" | "goto-official" | "goto-github" | "goto-npm" | "goto-local" | "refresh" | "update-all" | "entry" | "npm" | "path";
     title: string;
     desc?: string;
     icon?: string;
@@ -2208,10 +2261,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const isPathLike = /^(\/|~\/|\.{1,2}\/|file:)/.test(query) || /\.tgz$/.test(query);
     if (!query) {
       palAppendGroup(t("cmdPalette.actionsSection"));
+      palAppendItem({ kind: "goto-market", title: t("plugins.tab.market"), desc: t("cmdPalette.gotoMarket"), icon: "boxes" });
+      palAppendItem({ kind: "goto-installed", title: t("plugins.tab.installed"), desc: t("cmdPalette.gotoInstalled"), icon: "circle-check" });
+      palAppendItem({ kind: "goto-official", title: t("plugins.tab.official"), desc: t("cmdPalette.gotoOfficial"), icon: "package" });
       palAppendItem({ kind: "goto-github", title: t("plugins.tab.github"), desc: t("cmdPalette.gotoGithub"), icon: "github" });
       palAppendItem({ kind: "goto-npm", title: t("plugins.tab.npm"), desc: t("cmdPalette.gotoNpm"), icon: "package" });
       palAppendItem({ kind: "goto-local", title: t("plugins.tab.local"), desc: t("cmdPalette.gotoLocal"), icon: "folder-open" });
-      palAppendItem({ kind: "official", title: t("plugins.officialQuick"), desc: t("cmdPalette.gotoOfficial"), icon: "package" });
       palAppendItem({ kind: "refresh", title: t("plugins.refresh"), desc: t("cmdPalette.refreshDesc"), icon: "refresh-cw" });
       palAppendItem({ kind: "update-all", title: `${t("plugins.updateAll", { n: collectUpdateTasks().length })}`, desc: t("cmdPalette.updateAllDesc"), icon: "refresh-cw" });
       return;
@@ -2254,7 +2309,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   /** 命令面板 → GitHub 表格：切到「全部」视图，搜索该条目名称并定位展开详情 */
   const openGithubEntry = (p: PluginEntry): void => {
-    if (mainTab !== "github") switchMainTab("github");
+    if (mainTab !== "market") switchMainTab("market");
+    if (subTab !== "github") switchSubTab("github");
     githubView = "all";
     filterCat = "";
     filterText = p.name;
@@ -2271,13 +2327,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
   const executePalItem = (it: PalItem): void => {
     closePalette();
     switch (it.kind) {
-      case "goto-github": switchMainTab("github"); break;
-      case "goto-npm": switchMainTab("npm"); break;
-      case "goto-local": switchMainTab("local"); break;
-      case "official":
-        if (mainTab !== "npm") switchMainTab("npm");
-        els.official.scrollIntoView({ behavior: "smooth", block: "start" });
-        break;
+      case "goto-market": switchMainTab("market"); break;
+      case "goto-installed": switchMainTab("installed"); break;
+      case "goto-official": switchMainTab("official"); break;
+      case "goto-github": switchMainTab("market"); switchSubTab("github"); break;
+      case "goto-npm": switchMainTab("market"); switchSubTab("npm"); break;
+      case "goto-local": switchMainTab("market"); switchSubTab("local"); break;
       case "refresh": void refreshLatest(); break;
       case "update-all": updateAllUpdatable(); break;
       case "entry": if (it.entry) openGithubEntry(it.entry); break;
@@ -2359,6 +2414,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.refreshLabel.textContent = t("plugins.refresh");
     void loadInstalled();
     renderMainTabs();
+    renderSubTabs();
     renderGithubViews();
     renderCategories();
     renderOfficial();
@@ -2368,11 +2424,11 @@ export function initPlugins(opts: PluginCenterOptions): void {
     fillModeSelects();
     refreshToolbarVisibility();
     els.search.placeholder =
-      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
+      subTab === "github" ? t("plugins.searchGithub") : subTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
     updateBadge();
     renderUpdateAllBtn();
     renderLocalInstalled();
-    if (palInput && palEl && !palEl.hidden) renderPalette(palInput.value); // P2：命令面板文字跟随语言
+    if (palInput && palEl && !palEl.hidden) renderPalette(palInput.value); // 命令面板文字跟随语言
   });
 
   // 初始化：已安装 → 缓存（含 registry 快照 + 版本播种，跳过已安装）→ 秒开渲染快照 → 后台刷新 + 已安装更新检查 + 每 6h 定时
@@ -2384,16 +2440,21 @@ export function initPlugins(opts: PluginCenterOptions): void {
     await loadInstalled();
     await loadCache();
     renderMainTabs();
+    renderSubTabs();
     renderGithubViews();
     renderCategories();
     fillModeSelects();
     refreshToolbarVisibility();
-    if (mainTab === "github" && filterText) els.search.value = filterText; // P2：恢复上次搜索词（仅 GitHub 过滤语义）
+    if (subTab === "github" && filterText) els.search.value = filterText; // 恢复上次搜索词（仅 GitHub 过滤语义）
     els.search.placeholder =
-      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
-    els.githubPanel.hidden = mainTab !== "github";
-    els.npmPanel.hidden = mainTab !== "npm";
-    els.localPanel.hidden = mainTab !== "local";
+      subTab === "github" ? t("plugins.searchGithub") : subTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
+    // 主面板（插件市场 / 已安装 / DSH官方插件）与子面板（GitHub / npm / 本地）显隐
+    els.marketPanel.hidden = mainTab !== "market";
+    els.installedPanel.hidden = mainTab !== "installed";
+    els.officialPanel.hidden = mainTab !== "official";
+    els.githubPanel.hidden = subTab !== "github";
+    els.npmPanel.hidden = subTab !== "npm";
+    els.localPanel.hidden = subTab !== "local";
     renderOfficial();
     renderTable(true);
     renderBanner();
