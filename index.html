@@ -880,6 +880,12 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    .official-ver {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-all;
+    }
     .official-card button {
       margin-top: auto;
       align-self: flex-start;
@@ -965,9 +971,14 @@
     #view-plugins.is-busy .chip-rm,
     #view-plugins.is-busy .official-card button,
     #view-plugins.is-busy #plugins-update-all,
-    #view-plugins.is-busy #plugins-install-local {
+    #view-plugins.is-busy #plugins-search-go,
+    #view-plugins.is-busy #plugins-local-btns button {
       pointer-events: none; opacity: 0.5;
     }
+    .chip-open { cursor: pointer; }
+    .chip-open:hover { text-decoration: underline; }
+    .src-badge.recommended { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-soft); }
+    .tag.recommended { background: var(--warn-soft); color: var(--warn-text); }
     .install-btn.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
     .cancel-mini { margin-left: 2px; }
     .chip-armed { background: var(--warn-soft); border-color: var(--danger); }
@@ -975,6 +986,59 @@
       text-align: center; color: var(--text-faint);
       font-size: 0.75rem; padding: 6px 0;
     }
+
+    /* ===== P1 信息架构（主 tabs / 工具栏 / 面板 / 快捷入口 / 索引信息 / 本地列表 / npm 键盘） ===== */
+    .main-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+    .main-tab {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--card-2); border: 1px solid var(--border-strong);
+      color: var(--text-dim); padding: 6px 20px; border-radius: 10px;
+      font-size: 0.86rem; font-weight: 600; cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .main-tab:hover { background: var(--hover); color: var(--text-bright); }
+    .main-tab.active { background: var(--accent-strong); color: var(--accent-text); border-color: var(--accent-border); }
+    .plugin-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .plugin-local-btns { display: inline-flex; gap: 6px; }
+    .toolbar-search {
+      flex: 1; min-width: 200px;
+      background: var(--card-2); border: 1px solid var(--border-strong);
+      border-radius: 8px; color: var(--text); padding: 6px 12px;
+      font-size: 0.83rem; font-family: inherit; outline: none;
+    }
+    .toolbar-search:focus { border-color: var(--accent-border); }
+    .toolbar-select {
+      background: var(--card-2); border: 1px solid var(--border-strong);
+      color: var(--text); border-radius: 8px; padding: 5px 8px;
+      font-size: 0.78rem; font-family: inherit; outline: none; cursor: pointer;
+    }
+    .official-quick {
+      margin: 2px 0 6px;
+      background: var(--card); border: 1px dashed var(--accent-border) !important;
+      color: var(--link); font-weight: 600;
+    }
+    .official-quick:hover { background: var(--hover); }
+    .plugin-index-info {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      color: var(--text-faint); font-size: 0.72rem; padding: 2px 0 6px;
+    }
+    .local-error {
+      background: var(--warn-soft); color: var(--warn-text);
+      border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 7px 12px; font-size: 0.8rem; margin-bottom: 8px;
+    }
+    .local-installed-list { display: flex; flex-direction: column; gap: 4px; }
+    .local-installed-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--card); border: 1px solid var(--border-strong);
+      border-radius: 8px; padding: 6px 10px; font-size: 0.8rem;
+    }
+    .local-installed-row .li-name { font-family: 'JetBrains Mono', monospace; color: var(--text-bright); font-weight: 600; }
+    .local-installed-row .li-spec { color: var(--text-faint); font-size: 0.72rem; word-break: break-all; }
+    .local-installed-row .li-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+    .npm-result { cursor: pointer; }
+    .npm-result[aria-selected="true"] { outline: 1px solid var(--accent-border); background: var(--hover); }
+    .npm-result-body { padding: 6px 10px; font-size: 0.75rem; }
 
     /* ===== 来源 tabs / ★Stars / 来源徽标 / 提示条（006 双数据源 + 秒开） ===== */
     .source-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -1349,60 +1413,77 @@
       </div>
       <div class="installed-chips" id="installed-chips"></div>
 
-      <div class="section-title">
-        <span class="ticon"><i data-icon="package"></i></span>
-        <span data-i18n="plugins.officialTitle">官方组合包</span>
-        <span class="badge" data-i18n="plugins.officialBadge">@deepseek-ai 核心包</span>
-      </div>
-      <div class="official-grid" id="official-grid"></div>
+      <!-- P1-5 官方组合包全局快捷入口：点击切到 npm tab 官方分区 -->
+      <button id="official-quick" class="official-quick btn-icon link-btn" data-i18n="plugins.officialQuick">⚡ 官方组合包</button>
 
-      <div class="section-title">
-        <span class="ticon"><i data-icon="boxes"></i></span>
-        <span data-i18n="plugins.communityTitle">插件市场（精选 + GitHub Topic）</span>
-        <span class="badge" id="plugin-count">-</span>
+      <!-- 主 tabs：GitHub | npm | 本地（默认 GitHub） -->
+      <div id="plugin-main-tabs" class="main-tabs" role="tablist"></div>
+
+      <!-- 共享工具栏：一个搜索框，随主 tab 切换语义 -->
+      <div class="plugin-toolbar">
+        <input id="plugins-search" class="toolbar-search" spellcheck="false" autocomplete="off" />
+        <button id="plugins-search-go" class="btn-icon add-btn" hidden>
+          <i data-icon="search"></i><span data-i18n="plugins.npmSearchGo">搜索</span>
+        </button>
+        <span id="plugins-local-btns" class="plugin-local-btns" hidden>
+          <button id="local-dir-btn" class="btn-icon link-btn"><i data-icon="folder-open"></i><span data-i18n="plugins.localPickDirShort">选择目录</span></button>
+          <button id="local-tgz-btn" class="btn-icon link-btn"><i data-icon="package"></i><span data-i18n="plugins.localPickTgz">选择 .tgz</span></button>
+        </span>
+        <select id="plugin-filter-mode" class="toolbar-select" hidden></select>
+        <select id="plugin-sort-mode" class="toolbar-select" hidden></select>
+        <button id="plugins-refresh" class="btn-icon link-btn" hidden>
+          <i data-icon="refresh-cw"></i>
+          <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
+        </button>
       </div>
-      <div class="plugin-add-card">
-        <div class="plugin-add-row">
-          <span class="plugin-add-label" data-i18n="plugins.addFromLabel">从其它来源添加</span>
-          <input id="plugins-local-path" class="local-path-input" data-i18n-placeholder="plugins.localPathPlaceholder" placeholder="本地插件：/abs/plugin.tgz 或 ./本地目录" spellcheck="false" />
-          <button id="plugins-install-local" class="btn-icon add-btn" title="dsh plugin add file:&lt;path&gt;">
-            <i data-icon="folder-open"></i>
-            <span data-i18n="plugins.localInstall">安装本地</span>
-          </button>
-          <span class="plugin-add-sep"></span>
-          <input id="plugins-npm-search" data-i18n-placeholder="plugins.npmSearchPlaceholder" placeholder="按 npm 包名搜索并一键安装，如 dsh-theme-center" spellcheck="false" />
-          <button id="plugins-npm-go" class="btn-icon add-btn" title="search npm">
-            <i data-icon="search"></i>
-          </button>
+
+      <!-- GitHub 面板：二级视图（awesome/topics/全部/特别推荐）+ 分类 + 索引信息 + 表格 -->
+      <div id="plugin-github-panel">
+        <div id="plugin-github-views" class="source-tabs" role="tablist"></div>
+        <div id="plugin-cats" class="plugin-cats"></div>
+        <div id="plugin-index-info" class="plugin-index-info" hidden>
+          <span id="plugin-index-meta"></span>
+          <span class="badge" id="plugin-count">-</span>
         </div>
-        <div id="plugins-npm-results" class="npm-results" hidden></div>
-        <div class="plugin-add-row-inner">
-          <button id="plugins-refresh" class="btn-icon link-btn">
-            <i data-icon="refresh-cw"></i>
-            <span id="plugins-refresh-label" data-i18n="plugins.refresh">刷新插件索引</span>
-          </button>
-          <input id="plugins-search" class="local-search" data-i18n-placeholder="plugins.search" placeholder="搜索插件名称 / 描述…" spellcheck="false" />
-        </div>
+        <div id="plugin-loading" class="plugin-loading"></div>
+        <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
+        <table class="plugin-table" id="plugin-table" style="display:none;">
+          <thead>
+            <tr>
+              <th data-i18n="plugins.col.name">插件</th>
+              <th data-i18n="plugins.col.desc">描述</th>
+              <th data-i18n="plugins.col.version">版本</th>
+              <th data-i18n="plugins.col.stars">★ Stars</th>
+              <th data-i18n="plugins.col.source">来源</th>
+              <th data-i18n="plugins.col.status">状态</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="plugin-tbody"></tbody>
+        </table>
+        <div id="plugin-table-more" class="plugin-table-more" hidden></div>
       </div>
-      <div id="plugin-source-tabs" class="source-tabs"></div>
-      <div id="plugin-cats" class="plugin-cats"></div>
-      <div id="plugin-loading" class="plugin-loading"></div>
-      <div id="plugin-snapshot-banner" class="snapshot-banner" style="display:none;"></div>
-      <table class="plugin-table" id="plugin-table" style="display:none;">
-        <thead>
-          <tr>
-            <th data-i18n="plugins.col.name">插件</th>
-            <th data-i18n="plugins.col.desc">描述</th>
-            <th data-i18n="plugins.col.version">版本</th>
-            <th data-i18n="plugins.col.stars">★ Stars</th>
-            <th data-i18n="plugins.col.source">来源</th>
-            <th data-i18n="plugins.col.status">状态</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="plugin-tbody"></tbody>
-      </table>
-      <div id="plugin-table-more" class="plugin-table-more" hidden></div>
+
+      <!-- npm 面板：官方组合包固定分区 + npm 搜索结果 -->
+      <div id="plugin-npm-panel" hidden>
+        <div class="section-title">
+          <span class="ticon"><i data-icon="package"></i></span>
+          <span data-i18n="plugins.officialTitle">官方组合包</span>
+          <span class="badge" data-i18n="plugins.officialBadge">@deepseek-ai 核心包</span>
+        </div>
+        <div class="official-grid" id="official-grid"></div>
+        <div id="plugins-npm-results" class="npm-results" role="listbox" hidden></div>
+      </div>
+
+      <!-- 本地面板：安装入口 + 本地已安装（file:/link:）列表 -->
+      <div id="plugin-local-panel" hidden>
+        <div id="local-error" class="local-error" hidden></div>
+        <div class="section-title">
+          <span class="ticon"><i data-icon="folder-open"></i></span>
+          <span data-i18n="plugins.localInstalledTitle">本地已安装（file:/link:）</span>
+        </div>
+        <div id="local-installed-list" class="local-installed-list"></div>
+      </div>
     </section>
 
     <!-- 设置 -->

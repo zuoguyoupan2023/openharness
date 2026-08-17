@@ -28,8 +28,8 @@ import {
   TOPIC_CATEGORY_ORDER,
   type PluginEntry,
   type RegistrySnapshot,
-  type SourceTab,
 } from "./plugin-sources";
+import { RECOMMENDED_PLUGINS } from "./plugin-recommended";
 
 const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
   { name: "@deepseek-ai/dsh-base", descKey: "plugins.official.base" },
@@ -195,8 +195,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
   const els = {
     refresh: $("plugins-refresh") as HTMLButtonElement,
     refreshLabel: $("plugins-refresh-label") as HTMLSpanElement,
-    search: $("plugins-search") as HTMLInputElement,
-    sourceTabs: $("plugin-source-tabs"),
+    search: $("plugins-search") as HTMLInputElement, // 共享搜索框（随主 tab 切换语义）
+    searchGo: $("plugins-search-go") as HTMLButtonElement,
+    mainTabs: $("plugin-main-tabs"),
+    githubViews: $("plugin-github-views"),
     cats: $("plugin-cats"),
     chips: $("installed-chips"),
     path: $("profile-path"),
@@ -207,17 +209,37 @@ export function initPlugins(opts: PluginCenterOptions): void {
     loading: $("plugin-loading"),
     banner: $("plugin-snapshot-banner"),
     badge: document.getElementById("nav-plugins-badge") as HTMLElement | null,
-    npmSearch: $("plugins-npm-search") as HTMLInputElement | null,
-    npmGo: $("plugins-npm-go") as HTMLButtonElement | null,
-    npmResults: $("plugins-npm-results") as HTMLElement | null,
+    npmSearch: $("plugins-search") as HTMLInputElement, // npm tab 下即包名搜索
+    npmGo: $("plugins-search-go") as HTMLButtonElement,
+    npmResults: $("plugins-npm-results") as HTMLElement,
+    filterMode: $("plugin-filter-mode") as HTMLSelectElement,
+    sortMode: $("plugin-sort-mode") as HTMLSelectElement,
+    indexMeta: $("plugin-index-meta"),
+    localBtns: $("plugins-local-btns"),
+    localDirBtn: $("local-dir-btn") as HTMLButtonElement,
+    localTgzBtn: $("local-tgz-btn") as HTMLButtonElement,
+    localError: $("local-error"),
+    localList: $("local-installed-list"),
+    githubPanel: $("plugin-github-panel"),
+    npmPanel: $("plugin-npm-panel"),
+    localPanel: $("plugin-local-panel"),
+    officialQuick: $("official-quick") as HTMLButtonElement,
   };
 
+  // —— P1 信息架构状态（013 已确认：主 tab 默认 GitHub，GitHub 二级默认 awesome）——
+  type MainTab = "github" | "npm" | "local";
+  type GithubView = "awesome" | "topics" | "all" | "recommended";
+  type FilterMode = "all" | "installed" | "updatable" | "notinstalled";
+  type SortMode = "default" | "stars" | "updated" | "name";
+  let mainTab: MainTab = "github";
+  let githubView: GithubView = "awesome";
+  let filterMode: FilterMode = "all";
+  let sortMode: SortMode = "default";
+  let filterCat = "";
+  let filterText = "";
   let snapshot: RegistrySnapshot = getSnapshot();
   let plugins: PluginEntry[] = snapshot.plugins;
   let categoriesLabels: Record<string, { zh?: string; en?: string }> = snapshot.awesome?.categories ?? {};
-  let filterSource: SourceTab = "awesome";
-  let filterCat = "";
-  let filterText = "";
   let installed: InstalledPlugins = { deps: {}, bundles: [], profile: "" };
   let versions: Record<string, string> = {};
   /** 当前展示快照来源：bundle / cache / cdn */
@@ -349,6 +371,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
       el.title = spec ? `${n}@${spec}` : n;
       const txt = document.createElement("span");
       txt.textContent = label ? `${n} @${label}` : n;
+      if (isDep) txt.classList.add("chip-open"); // P1-4：chip 主体可点击跳转来源详情
+      txt.title = isDep ? t("plugins.chipJumpHint") : "";
+      txt.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (isDep) chipOpenDetail(n, spec);
+      });
       el.appendChild(txt);
       if (isDep) {
         // 更新图标仅「npm 且可更新」时出现；github/本地 chips 不显示更新图标（语义不同，走重新安装，见表格/详情）
@@ -379,37 +407,166 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
-  // —— 来源 tabs ——
-  function renderSourceTabs(): void {
-    els.sourceTabs.innerHTML = "";
-    const mk = (id: SourceTab, key: string, icon: string): void => {
+  /** P1-4：已安装 chip 点击 → 跳到对应来源 tab 并展开详情 / 搜索该包 */
+  function chipOpenDetail(name: string, spec: string | undefined): void {
+    const pkg = pkgNameOf(name);
+    if (/^(file:|link:)/.test(spec || "")) {
+      switchMainTab("local"); // 本地 → 本地 tab（列表可见）
+      return;
+    }
+    if (/^(github:|git\+)/.test(spec || "")) {
+      // GitHub → 「全部」视图 + 搜索该包 + 定位展开
+      switchMainTab("github");
+      githubView = "all";
+      filterCat = "";
+      filterText = pkg;
+      els.search.value = pkg;
+      renderGithubViews();
+      renderCategories();
+      renderTable(true);
+      const v = document.getElementById("view-plugins");
+      if (v) v.scrollTop = 0;
+      locateAndOpen(pkg);
+      return;
+    }
+    // npm → 切到 npm tab 并搜索该包（结果行内可展开详情）
+    switchMainTab("npm");
+    els.search.value = pkg;
+    void runNpmSearch();
+  }
+
+  function locateAndOpen(pkg: string): void {
+    const tr = els.tbody.querySelector<HTMLTableRowElement>(`tr.plugin-row[data-pkg="${CSS.escape(pkg)}"]`);
+    if (!tr) return;
+    tr.scrollIntoView({ block: "center" });
+    const idx = Number(tr.dataset.idx || "-1");
+    const p = idx >= 0 && idx < currentRows.length ? currentRows[idx] : undefined;
+    if (p) toggleDetail(tr, p);
+  }
+
+  // —— 主 tabs（GitHub / npm / 本地，默认 GitHub，已确认 2026-08-17）——
+  function renderMainTabs(): void {
+    els.mainTabs.innerHTML = "";
+    const tabs: Array<[MainTab, string, string]> = [
+      ["github", "plugins.tab.github", "github"],
+      ["npm", "plugins.tab.npm", "package"],
+      ["local", "plugins.tab.local", "folder-open"],
+    ];
+    for (const [id, key, icon] of tabs) {
       const b = document.createElement("button");
-      b.className = "src-tab" + (filterSource === id ? " active" : "");
+      b.className = "main-tab" + (mainTab === id ? " active" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(mainTab === id));
+      b.innerHTML = `${iconSvg(icon)}<span>${t(key)}</span>`;
+      b.addEventListener("click", () => switchMainTab(id));
+      els.mainTabs.appendChild(b);
+    }
+  }
+
+  /** 切换主 tab：切换面板 / 搜索框语义 / 工具栏可见性 */
+  function switchMainTab(next: MainTab): void {
+    if (mainTab === next) return;
+    mainTab = next;
+    renderMainTabs();
+    refreshToolbarVisibility();
+    els.githubPanel.hidden = mainTab !== "github";
+    els.npmPanel.hidden = mainTab !== "npm";
+    els.localPanel.hidden = mainTab !== "local";
+    els.search.placeholder =
+      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
+    if (mainTab === "github") {
+      renderGithubViews();
+      renderCategories();
+      renderTable(true);
+      renderIndexInfo();
+      const v = document.getElementById("view-plugins");
+      if (v) v.scrollTop = 0;
+    } else if (mainTab === "npm") {
+      closeNpmResults();
+    } else {
+      renderLocalInstalled();
+      hideLocalError();
+    }
+  }
+
+  /** 工具栏可见性：共享搜索框常显；搜索/本地按钮/筛选/排序/刷新随主 tab 切换 */
+  function refreshToolbarVisibility(): void {
+    els.searchGo.hidden = mainTab !== "npm";
+    els.localBtns.hidden = mainTab !== "local";
+    els.filterMode.hidden = mainTab !== "github";
+    els.sortMode.hidden = mainTab !== "github";
+    els.refresh.hidden = mainTab !== "github";
+  }
+
+  // —— GitHub 二级视图（awesome / topics / 全部 / 特别推荐）——
+  function renderGithubViews(): void {
+    els.githubViews.innerHTML = "";
+    const views: Array<[GithubView, string, string]> = [
+      ["awesome", "plugins.githubView.awesome", "star"],
+      ["topics", "plugins.githubView.topics", "github"],
+      ["all", "plugins.githubView.all", "boxes"],
+      ["recommended", "plugins.githubView.recommended", "circle-check"],
+    ];
+    for (const [id, key, icon] of views) {
+      const b = document.createElement("button");
+      b.className = "src-tab" + (githubView === id ? " active" : "");
+      b.setAttribute("aria-pressed", String(githubView === id));
       b.innerHTML = `${iconSvg(icon)}<span>${t(key)}</span>`;
       b.addEventListener("click", () => {
-        filterSource = id;
-        filterCat = ""; // 切源时重置分类
-        renderSourceTabs();
+        githubView = id;
+        filterCat = ""; // 切视图时重置分类
+        renderGithubViews();
         renderCategories();
         renderTable(true);
         const v = document.getElementById("view-plugins");
         if (v) v.scrollTop = 0;
       });
-      els.sourceTabs.appendChild(b);
-    };
-    mk("awesome", "plugins.source.awesome", "star");
-    mk("topic", "plugins.source.topic", "github");
-    mk("all", "plugins.source.all", "boxes");
+      els.githubViews.appendChild(b);
+    }
   }
 
-  // —— 分类 chips（依据当前来源词汇表）——
+  // —— 筛选 / 排序下拉（GitHub tab；已确认：全部/已安装/可更新/未安装；Stars/最近更新/名称）——
+  function fillModeSelects(): void {
+    els.filterMode.innerHTML = "";
+    const modes: Array<[FilterMode, string]> = [
+      ["all", "plugins.filter.all"],
+      ["installed", "plugins.filter.installed"],
+      ["updatable", "plugins.filter.updatable"],
+      ["notinstalled", "plugins.filter.notInstalled"],
+    ];
+    for (const [v, key] of modes) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t(key);
+      els.filterMode.appendChild(o);
+    }
+    els.filterMode.value = filterMode;
+    els.sortMode.innerHTML = "";
+    const sorts: Array<[SortMode, string]> = [
+      ["default", "plugins.sort.default"],
+      ["stars", "plugins.sort.stars"],
+      ["updated", "plugins.sort.updated"],
+      ["name", "plugins.sort.name"],
+    ];
+    for (const [v, key] of sorts) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t(key);
+      els.sortMode.appendChild(o);
+    }
+    els.sortMode.value = sortMode;
+  }
+
+  // —— 分类 chips（依据当前 GitHub 二级视图词汇表；特别推荐视图不显示）——
   function renderCategories(): void {
     els.cats.innerHTML = "";
+    if (githubView === "recommended") return; // 特别推荐不显示大分类 chips（名单很小）
     const lang = getLang();
     const mk = (key: string, label: string): void => {
       const chip = document.createElement("button");
       chip.className = "cat-chip" + (filterCat === key ? " active" : "");
       chip.textContent = label;
+      chip.setAttribute("aria-pressed", String(filterCat === key));
       chip.addEventListener("click", () => {
         filterCat = filterCat === key ? "" : key;
         renderCategories();
@@ -420,56 +577,141 @@ export function initPlugins(opts: PluginCenterOptions): void {
       els.cats.appendChild(chip);
     };
     mk("", t("plugins.allCat"));
-    if (filterSource === "topic") {
+    if (githubView === "topics") {
       TOPIC_CATEGORY_ORDER.forEach((c) => mk(c, t(`plugins.topicCat.${c}`) || c));
     } else {
       AWESOME_CATEGORY_ORDER.forEach((c) => mk(c, categoriesLabels[c]?.[lang] ?? c));
     }
   }
 
+  /** 官方组合包卡（P1-5：显示已装版本/最新版本/可更新；按 P0-6 语义给更新/重新安装；不提供卸载，已确认） */
   function renderOfficial(): void {
     els.official.innerHTML = "";
-    OFFICIAL_PKGS.forEach((p) => {
+    for (const p of OFFICIAL_PKGS) {
       const card = document.createElement("div");
       card.className = "official-card";
+      const installedFlag = isInstalled(p.name);
+      const instSpec = (installed.deps || {})[p.name];
+      const latest = versions[p.name];
+      const updatable = isUpdatable(p.name, p.name, latest);
+      const info = document.createElement("div");
+      info.className = "official-name";
+      info.textContent = p.name;
+      card.appendChild(info);
+      const desc = document.createElement("div");
+      desc.className = "official-desc";
+      desc.textContent = t(p.descKey);
+      card.appendChild(desc);
       const btn = document.createElement("button");
       btn.className = "btn-icon";
-      if (isInstalled(p.name)) {
-        btn.textContent = t("plugins.installedTag");
-        btn.disabled = true;
+      if (installedFlag) {
+        const verLine = document.createElement("div");
+        verLine.className = "official-ver";
+        let v = `@${instSpec ?? "?"}`;
+        if (latest && latest !== "—") v += ` → ${latest}`;
+        if (updatable) v += ` · ${t("plugins.updateTag")}`;
+        verLine.textContent = v;
+        card.appendChild(verLine);
+        if (updatable) {
+          btn.innerHTML = iconSvg("upload") + t("plugins.update");
+          btn.title = latest && latest !== "—" ? `${t("plugins.updateTo")} ${latest}` : t("plugins.update");
+          btn.addEventListener("click", () =>
+            enqueueAction([{ label: `${t("plugins.update")} ${p.name}`, cmd: ["plugin", "--profile", "web", "update", p.name] }])
+          );
+        } else {
+          btn.innerHTML = iconSvg("refresh-cw") + t("plugins.reinstall");
+          btn.title = t("plugins.reinstall");
+          btn.addEventListener("click", () =>
+            enqueueAction([{ label: `${t("plugins.reinstall")} ${p.name}`, cmd: ["plugin", "--profile", "web", "add", p.name] }])
+          );
+        }
       } else {
-        btn.innerHTML = iconSvg("download");
-        btn.appendChild(document.createTextNode(t("plugins.install")));
+        btn.innerHTML = iconSvg("download") + t("plugins.install");
         btn.addEventListener("click", () =>
           enqueueAction([{ label: `${t("plugins.install")} ${p.name}`, cmd: ["plugin", "--profile", "web", "add", p.name] }])
         );
       }
-      card.innerHTML = `<div class="official-name">${p.name}</div><div class="official-desc">${t(p.descKey)}</div>`;
       card.appendChild(btn);
       els.official.appendChild(card);
+    }
+  }
+
+  /** 特别推荐合成条目：附带 reasonKey 供表格行 title/aria-label 显示推荐理由 */
+  interface RecommendedEntry extends PluginEntry {
+    reasonKey?: string;
+  }
+
+  /** 特别推荐 5 项 → 合成 PluginEntry（registry 命中则补齐 stars/license/版本/描述；未命中也照常渲染，安装用自带 installSpec） */
+  function recommendedEntries(): PluginEntry[] {
+    return RECOMMENDED_PLUGINS.map((r) => {
+      const hit = plugins.find(
+        (p) =>
+          p.pkg_name === r.npmPkg ||
+          p.name === r.npmPkg ||
+          p.name === r.githubRepo ||
+          (p.url ?? "").endsWith(r.githubRepo)
+      );
+      const reason = t(r.reasonKey);
+      const e: RecommendedEntry = {
+        id: r.id,
+        name: r.npmPkg,
+        sources: hit?.sources ?? [],
+        url: hit?.url ?? r.url,
+        description: hit?.description ?? { zh: reason, en: reason },
+        category: hit?.category,
+        topicCategory: hit?.topicCategory,
+        stars: hit?.stars,
+        license: hit?.license,
+        updated_at: hit?.updated_at,
+        pkg_name: r.npmPkg,
+        version: hit?.version,
+        installSpec: r.installSpec,
+        isNpm: true,
+        reasonKey: r.reasonKey,
+      };
+      return e;
     });
   }
 
-  /** 当前来源 + 分类 + 搜索 过滤后的条目 */
+  /** 特别推荐行的来源徽标：推荐 + GitHub + npm 双来源（P1-2） */
+  function recBadgesHtml(): string {
+    return (
+      `<span class="src-badge recommended" title="${escHtml(t("plugins.recommendedBadge"))}">${escHtml(t("plugins.recommendedBadge"))}</span>` +
+      `<span class="src-badge topic" title="GitHub">GitHub</span>` +
+      `<span class="src-badge awesome" title="npm">npm</span>`
+    );
+  }
+
+  /** 当前 GitHub 视图 + 分类 + 筛选 + 排序 + 搜索 过滤后的条目（P1-2） */
   function filtered(): PluginEntry[] {
+    const base =
+      githubView === "recommended"
+        ? recommendedEntries()
+        : plugins.filter((p) => {
+            if (githubView === "awesome" && !p.sources.includes("awesome")) return false;
+            if (githubView === "topics" && !p.sources.includes("topic")) return false;
+            return true; // all
+          });
     const q = filterText.trim().toLowerCase();
-    return plugins.filter((p) => {
-      if (filterSource === "awesome" && !p.sources.includes("awesome")) return false;
-      if (filterSource === "topic" && !p.sources.includes("topic")) return false;
-      if (filterSource === "all") {
-        /* keep all */
-      }
+    const rows = base.filter((p) => {
+      const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
+      const installedFlag = isInstalled(pkg) || isInstalled(p.name);
       if (filterCat) {
-        if (filterSource === "topic") {
+        if (githubView === "topics") {
           if (p.topicCategory !== filterCat) return false;
-        } else {
-          if (p.category !== filterCat) return false;
-        }
+        } else if (p.category !== filterCat) return false;
       }
+      if (filterMode === "installed" && !installedFlag) return false;
+      if (filterMode === "notinstalled" && installedFlag) return false;
+      if (filterMode === "updatable" && !isUpdatable(p.name, pkg, versions[pkg])) return false;
       if (!q) return true;
       const hay = `${p.name} ${p.description?.zh ?? ""} ${p.description?.en ?? ""} ${p.pkg_name ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
+    if (sortMode === "stars") return [...rows].sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0));
+    if (sortMode === "updated") return [...rows].sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
+    if (sortMode === "name") return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
   }
 
   /** 详情页操作按钮（安装/更新/重新安装/卸载，P0-6 语义 + P0-3 确认） */
@@ -612,7 +854,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
   function repoMetaHtml(p: PluginEntry): string {
     const lang = getLang();
     const catLabel =
-      filterSource === "topic"
+      githubView === "topics"
         ? p.topicCategory
           ? t(`plugins.topicCat.${p.topicCategory}`) || p.topicCategory
           : "—"
@@ -752,6 +994,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
     els.loading.style.display = "none";
     const slice = rows.slice(0, visibleRows);
+    const isRec = githubView === "recommended";
     slice.forEach((p, i) => {
       const spec = p.installSpec;
       const npm = p.isNpm;
@@ -766,14 +1009,19 @@ export function initPlugins(opts: PluginCenterOptions): void {
       }
 
       let tagHtml = "";
-      if (installedFlag) tagHtml = `<span class="tag installed">${t("plugins.installedTag")}</span>`;
-      else if (npm && ver && ver !== "—") tagHtml = `<span class="tag latest">${t("plugins.latestTag")}</span>`;
-      if (updatable) tagHtml = `<span class="tag update">${t("plugins.updateTag")}</span>`;
+      if (isRec) tagHtml = `<span class="tag recommended">${t("plugins.recommendedBadge")}</span>`;
+      if (installedFlag) tagHtml += `<span class="tag installed">${t("plugins.installedTag")}</span>`;
+      else if (npm && ver && ver !== "—") tagHtml += `<span class="tag latest">${t("plugins.latestTag")}</span>`;
+      if (updatable) tagHtml += `<span class="tag update">${t("plugins.updateTag")}</span>`;
 
       const desc = (p.description?.zh || p.description?.en || "").slice(0, 120);
+      const reasonKey = isRec ? (p as RecommendedEntry).reasonKey : undefined;
+      const reason = reasonKey ? t(reasonKey) : "";
       const tr = document.createElement("tr");
       tr.className = "plugin-row";
-      tr.title = t("plugins.detail.hint");
+      tr.tabIndex = 0; // P1-6 键盘可达
+      tr.title = isRec && reason ? `${t("plugins.recommendedBadge")} · ${reason}` : t("plugins.detail.hint");
+      tr.setAttribute("aria-label", `${p.name}${reason ? " · " + reason : ""}`);
       tr.dataset.pkg = pkg;
       tr.dataset.idx = String(i);
       tr.innerHTML = `
@@ -781,14 +1029,21 @@ export function initPlugins(opts: PluginCenterOptions): void {
         <td class="desc">${escHtml(desc)}</td>
         <td class="ver">${verHtml}</td>
         <td class="stars">${iconSvg("star")}<span>${escHtml(formatStars(p.stars))}</span></td>
-        <td class="src">${sourceBadgesHtml(p)}</td>
+        <td class="src">${isRec ? recBadgesHtml() : sourceBadgesHtml(p)}</td>
         <td>${tagHtml}</td>
         <td class="actions">${tableActionsHtmlFor(p)}</td>`;
       bindRowActions(tr, p);
+      const openDetail = (): void => toggleDetail(tr, p);
       tr.addEventListener("click", (ev) => {
         const target = ev.target as HTMLElement;
         if (target.closest("a, button, [data-act]")) return;
-        toggleDetail(tr, p);
+        openDetail();
+      });
+      tr.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          openDetail();
+        }
       });
       els.tbody.appendChild(tr);
     });
@@ -1011,6 +1266,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
         renderTable(false);
         updateBadge();
         renderUpdateAllBtn();
+        renderLocalInstalled();
       } finally {
         setBusy(false);
       }
@@ -1089,12 +1345,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
     moreObs.observe(moreEl);
   }
 
-  /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装） */
+  /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装；P1-6 图标按钮带 aria-label） */
   function tableActionsHtmlFor(p: PluginEntry): string {
     const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
     const installedFlag = isInstalled(pkg) || isInstalled(p.name);
     if (!installedFlag) {
-      return `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(p.installSpec)}" title="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
+      return `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(p.installSpec)}" title="${escHtml(t("plugins.install"))}" aria-label="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
     }
     const npm = p.isNpm;
     const instSpec = installedSpecOf(pkg, p.name);
@@ -1102,15 +1358,15 @@ export function initPlugins(opts: PluginCenterOptions): void {
     let upHtml = "";
     if (!npm) {
       const upCmd = updateCommandFor(false, instSpec, pkg);
-      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="reinstall" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(t("plugins.reinstall"))}">${iconSvg("refresh-cw")}</button>`;
+      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="reinstall" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(t("plugins.reinstall"))}" aria-label="${escHtml(t("plugins.reinstall"))}">${iconSvg("refresh-cw")}</button>`;
     } else if (isUpdatable(p.name, pkg, latest)) {
       const upCmd = updateCommandFor(true, instSpec, pkg);
       const to = latest && latest !== "—" ? `${t("plugins.updateTo")} ${latest}` : t("plugins.update");
-      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="update" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(to)}">${iconSvg("upload")}</button>`;
+      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="update" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(to)}" aria-label="${escHtml(to)}">${iconSvg("upload")}</button>`;
     } else {
-      upHtml = `<button class="install-btn btn-icon" disabled title="${escHtml(t("plugins.alreadyLatest"))}">${iconSvg("check")}</button>`;
+      upHtml = `<button class="install-btn btn-icon" disabled title="${escHtml(t("plugins.alreadyLatest"))}" aria-label="${escHtml(t("plugins.alreadyLatest"))}">${iconSvg("check")}</button>`;
     }
-    return `${upHtml} <button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
+    return `${upHtml} <button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}" aria-label="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
   }
 
   /** 绑定一行内的操作按钮（初始化渲染与版本回包增量共用） */
@@ -1159,53 +1415,113 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
-  // ===== 本地插件安装（.tgz 或插件目录）=====
+  // ===== 本地插件安装（P1-1 / 用户需求：拆「选择目录」「选择 .tgz」两个入口；路径错误在当前页面提示）=====
   // `dsh plugin add <spec>` 原生支持：file:./x-0.1.0.tgz / file:/abs/path / 本地目录。
-  // ① 点「安装本地」按钮 → 弹系统对话框选「文件夹」或「.tgz 安装包」（原生 picker）；
-  // ② 也可直接在输入框填写/粘贴路径作为快捷方式。
-  const INSTALL_LOCAL_BTN = "plugins-install-local";
-  const LOCAL_PATH_INPUT = "plugins-local-path";
-  const installLocalBtn = $(INSTALL_LOCAL_BTN) as HTMLButtonElement | null;
-  const localPathInput = $(LOCAL_PATH_INPUT) as HTMLInputElement | null;
+  const localSpec = (raw: string): string => {
+    const v = raw.trim();
+    return v.startsWith("file:") ? v : `file:${v}`;
+  };
 
-  /** 执行一次本地插件安装（spec 为 file: 前缀的本地路径 spec），走统一动作队列 */
-  function doLocalInstall(spec: string): void {
-    if (!spec) {
-      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
+  function showLocalError(msg: string): void {
+    els.localError.textContent = msg;
+    els.localError.hidden = false;
+  }
+  function hideLocalError(): void {
+    els.localError.textContent = "";
+    els.localError.hidden = true;
+  }
+
+  /** 执行一次本地插件安装（spec 为 file: 前缀路径），走统一动作队列；空路径在当前页提示（不加日志页） */
+  function doLocalInstall(raw: string, pickPath?: string): void {
+    const value = pickPath ?? raw;
+    if (!value.trim()) {
+      showLocalError(t("plugins.localEmptyInline"));
       return;
     }
+    const spec = localSpec(value);
+    hideLocalError();
     enqueueAction([{ label: `${t("plugins.install")} ${spec}`, cmd: ["plugin", "--profile", "web", "add", spec] }]);
   }
 
-  async function installLocalPlugin(): Promise<void> {
-    if (!installLocalBtn) return;
-    // 优先走原生「选文件夹」（用户最常用）；取消后再试「选 .tgz 文件」。
-    // 若原生对话框不可用（异常），回退到输入框填写。
-    try {
-      const dir = await open({ multiple: false, directory: true, title: t("plugins.localPickDir") });
-      if (dir && typeof dir === "string") {
-        localPathInput && (localPathInput.value = dir);
-        return void doLocalInstall(`file:${dir}`);
+  els.localDirBtn.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const dir = await open({ multiple: false, directory: true, title: t("plugins.localPickDir") });
+        if (dir && typeof dir === "string") {
+          els.search.value = dir;
+          doLocalInstall("", dir);
+        }
+      } catch {
+        showLocalError(t("plugins.localEmptyInline")); // 对话框不可用：提示走输入框
       }
-    } catch {
-      /* 原生对话框不可用，走输入框兜底 */
+    })();
+  });
+  els.localTgzBtn.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const file = await open({
+          multiple: false,
+          directory: false,
+          filters: [{ name: "tgz", extensions: ["tgz"] }],
+          title: t("plugins.localPickTgz"),
+        });
+        if (file && typeof file === "string") {
+          els.search.value = file;
+          doLocalInstall("", file);
+        }
+      } catch {
+        showLocalError(t("plugins.localEmptyInline"));
+      }
+    })();
+  });
+
+  /** 本地已安装（file:/link:）条目 */
+  function localInstalledEntries(): Array<{ n: string; spec: string }> {
+    const out: Array<{ n: string; spec: string }> = [];
+    for (const n of installedNames(installed)) {
+      const spec = (installed.deps || {})[n];
+      if (spec && /^(file:|link:)/.test(spec)) out.push({ n, spec });
     }
-    // 对话框被取消或不可用：从输入框取路径
-    const raw = localPathInput?.value.trim() ?? "";
-    if (!raw) {
-      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
-      return;
-    }
-    const spec = raw.startsWith("file:") ? raw : `file:${raw}`;
-    void doLocalInstall(spec);
+    return out;
   }
 
-  installLocalBtn?.addEventListener("click", () => {
-    void installLocalPlugin();
-  });
-  localPathInput?.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") void doLocalInstall(localPathInput.value.trim() ? (localPathInput.value.trim().startsWith("file:") ? localPathInput.value.trim() : `file:${localPathInput.value.trim()}`) : "");
-  });
+  /** 本地已安装列表（P1-1/P1-4：共享搜索框同时承担过滤） */
+  function renderLocalInstalled(): void {
+    els.localList.innerHTML = "";
+    const q = els.search.value.trim().toLowerCase();
+    const rows = localInstalledEntries().filter(
+      (r) => !q || r.n.toLowerCase().includes(q) || r.spec.toLowerCase().includes(q)
+    );
+    if (!rows.length) {
+      els.localList.textContent = t("plugins.localInstalledEmpty");
+      return;
+    }
+    for (const { n, spec } of rows) {
+      const row = document.createElement("div");
+      row.className = "local-installed-row";
+      row.innerHTML = `<span class="li-name">${escHtml(n)}</span><span class="li-spec">${escHtml(spec)}</span>`;
+      const acts = document.createElement("span");
+      acts.className = "li-actions";
+      const rein = document.createElement("button");
+      rein.className = "install-btn btn-icon";
+      rein.innerHTML = iconSvg("refresh-cw") + t("plugins.reinstall");
+      rein.title = t("plugins.reinstall");
+      rein.addEventListener("click", () =>
+        enqueueAction([{ label: `${t("plugins.reinstall")} ${n}`, cmd: ["plugin", "--profile", "web", "add", spec] }])
+      );
+      acts.appendChild(rein);
+      const rm = document.createElement("button");
+      rm.className = "install-btn btn-icon";
+      rm.innerHTML = iconSvg("trash-2") + t("plugins.remove");
+      rm.title = t("plugins.remove");
+      rm.addEventListener("click", () =>
+        confirmRemoveInPlace(rm, `${t("plugins.remove")} ${n}`, ["plugin", "--profile", "web", "remove", n])
+      );
+      acts.appendChild(rm);
+      row.appendChild(acts);
+      els.localList.appendChild(row);
+    }
+  }
 
   /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺；force=true 强制刷新。
    * 回包后仅增量更新对应行（P0-4），不整表重渲。 */
@@ -1282,6 +1598,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     };
     renderBanner();
     renderCategories();
+    renderIndexInfo();
     renderTable(true);
     updateBadge();
     await persistCache(true);
@@ -1298,32 +1615,76 @@ export function initPlugins(opts: PluginCenterOptions): void {
       })
     );
   });
+  // ===== 共享搜索框（P1-1：一个输入框，随主 tab 切换语义：GitHub 过滤 / npm 实时搜索 / 本地路径）=====
   let searchTimer = 0;
   els.search.addEventListener("input", () => {
     window.clearTimeout(searchTimer);
+    const delay = mainTab === "npm" ? 400 : 150;
     searchTimer = window.setTimeout(() => {
-      filterText = els.search.value;
-      renderTable(true);
-      const v = document.getElementById("view-plugins");
-      if (v) v.scrollTop = 0;
-    }, 150);
+      if (mainTab === "github") {
+        filterText = els.search.value;
+        renderTable(true);
+        const v = document.getElementById("view-plugins");
+        if (v) v.scrollTop = 0;
+      } else if (mainTab === "npm") {
+        void runNpmSearch();
+      } else {
+        renderLocalInstalled();
+      }
+    }, delay);
+  });
+  els.searchGo.addEventListener("click", () => void runNpmSearch());
+  els.search.addEventListener("keydown", (ev) => {
+    if (mainTab === "npm") {
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        moveNpmHighlight(1);
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        moveNpmHighlight(-1);
+      } else if (ev.key === "Enter") {
+        const hi = els.npmResults.querySelector<HTMLButtonElement>('[aria-selected="true"] button.install-btn');
+        if (hi) hi.click();
+        else void runNpmSearch();
+      } else if (ev.key === "Escape") {
+        closeNpmResults();
+      }
+    } else if (mainTab === "local" && ev.key === "Enter") {
+      ev.preventDefault();
+      doLocalInstall(els.search.value);
+    }
   });
 
-  // ===== npm 按包名实时搜索 + 一键安装 =====
-  let npmTimer = 0;
+  // ===== npm 按包名实时搜索 + 键盘导航 + 行内详情 + 已安装状态（P1-3）=====
   let npmSearchSeq = 0; // P0-5 竞态保护：旧请求不覆盖新结果
+  let npmHighlight = -1;
+
+  function closeNpmResults(): void {
+    els.npmResults.hidden = true;
+    els.npmResults.innerHTML = "";
+    npmHighlight = -1;
+  }
+
+  function moveNpmHighlight(delta: number): void {
+    const rows = els.npmResults.querySelectorAll<HTMLElement>(".npm-result");
+    if (!rows.length) return;
+    npmHighlight = Math.max(0, Math.min(rows.length - 1, npmHighlight + delta));
+    rows.forEach((r, i) => r.setAttribute("aria-selected", String(i === npmHighlight)));
+    rows[npmHighlight].scrollIntoView({ block: "nearest" });
+  }
+
   async function runNpmSearch(): Promise<void> {
     if (!els.npmSearch || !els.npmResults || !els.npmGo) return;
     const seq = ++npmSearchSeq;
     const q = els.npmSearch.value.trim();
     if (!q) {
-      els.npmResults.hidden = true;
-      els.npmResults.innerHTML = "";
+      closeNpmResults();
       return;
     }
     els.npmGo.disabled = true;
     els.npmResults.hidden = false;
     els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearching"))}</div>`;
+    npmHighlight = -1;
     try {
       const items = await searchNpm(q);
       if (seq !== npmSearchSeq) return; // 过期结果丢弃
@@ -1332,14 +1693,22 @@ export function initPlugins(opts: PluginCenterOptions): void {
         return;
       }
       els.npmResults.innerHTML = "";
+      const seen = new Set<string>();
       for (const it of items) {
         const name = it.package?.name ?? "";
-        if (!name) continue;
+        if (!name || seen.has(name)) continue; // 去重：同名包只保留一条
+        seen.add(name);
         const ver = it.package?.version ?? "";
         const desc = it.package?.description ?? "";
         const installedFlag = isInstalled(name);
+        const spec = (installed.deps || {})[name];
+        const latest = versions[name];
+        const iv = spec ? installedVersionOf(spec) : null;
+        const updatable = installedFlag && !!spec && !!latest && latest !== "—" && iv !== null && compareVer(latest, iv) > 0;
         const row = document.createElement("div");
         row.className = "npm-result" + (installedFlag ? " dim" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", "false");
         const main = document.createElement("div");
         main.className = "npm-result-main";
         const nm = document.createElement("div");
@@ -1354,16 +1723,42 @@ export function initPlugins(opts: PluginCenterOptions): void {
         row.appendChild(main);
         const btn = document.createElement("button");
         btn.className = "install-btn btn-icon";
-        if (installedFlag) {
-          btn.innerHTML = iconSvg("check") + t("plugins.installedTag");
+        if (updatable) {
+          btn.innerHTML = iconSvg("upload") + t("plugins.npmUpdateTo", { v: latest });
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            enqueueAction([{ label: `${t("plugins.update")} ${name}`, cmd: ["plugin", "--profile", "web", "update", name] }]);
+          });
+        } else if (installedFlag) {
+          btn.innerHTML = iconSvg("check") + t("plugins.npmInstalledLatest");
           btn.disabled = true;
         } else {
           btn.innerHTML = iconSvg("download") + t("plugins.install");
-          btn.addEventListener("click", () =>
-            enqueueAction([{ label: `${t("plugins.install")} ${name}`, cmd: ["plugin", "--profile", "web", "add", name] }])
-          );
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            enqueueAction([{ label: `${t("plugins.install")} ${name}`, cmd: ["plugin", "--profile", "web", "add", name] }]);
+          });
         }
         row.appendChild(btn);
+        const body = document.createElement("div");
+        body.className = "npm-result-body";
+        body.hidden = true;
+        row.appendChild(body);
+        row.addEventListener("click", (ev) => {
+          if (ev.target instanceof HTMLElement && ev.target.closest("button")) return;
+          // 高亮 + 展开/收起行内详情（复用 apply detailSeq 竞态保护）
+          const rows = els.npmResults.querySelectorAll<HTMLElement>(".npm-result");
+          npmHighlight = [...rows].indexOf(row);
+          rows.forEach((r, i) => r.setAttribute("aria-selected", String(i === npmHighlight)));
+          detailSeq++;
+          if (body.hidden) {
+            body.hidden = false;
+            body.textContent = t("plugins.detail.loading");
+            void renderNpmDetail(body, name, detailSeq);
+          } else {
+            body.hidden = true;
+          }
+        });
         els.npmResults.appendChild(row);
       }
     } catch (e) {
@@ -1374,39 +1769,86 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
-  els.npmSearch?.addEventListener("input", () => {
-    window.clearTimeout(npmTimer);
-    npmTimer = window.setTimeout(() => void runNpmSearch(), 400);
-  });
-  els.npmGo?.addEventListener("click", () => void runNpmSearch());
-  els.npmSearch?.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") void runNpmSearch();
+  // npm 结果：点击页面其它区域关闭（P1-3）
+  document.addEventListener("click", (ev) => {
+    if (mainTab !== "npm" || els.npmResults.hidden) return;
+    const t = ev.target as HTMLElement | null;
+    if (t && (t.closest("#plugins-npm-results") || t.closest("#plugins-search") || t.closest("#plugins-search-go"))) return;
+    closeNpmResults();
   });
 
   // P0-6：全部更新（批量执行，只重启一次 DSH）
   document.getElementById("plugins-update-all")?.addEventListener("click", () => updateAllUpdatable());
 
+  // P1-5：官方组合包全局快捷入口 → 切到 npm tab 官方分区
+  els.officialQuick.addEventListener("click", () => {
+    if (mainTab !== "npm") switchMainTab("npm");
+    els.official.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // P1-2：筛选（全部/已安装/可更新/未安装）与排序（Stars/最近更新/名称）变更
+  els.filterMode.addEventListener("change", () => {
+    filterMode = els.filterMode.value as FilterMode;
+    renderTable(true);
+    const v = document.getElementById("view-plugins");
+    if (v) v.scrollTop = 0;
+  });
+  els.sortMode.addEventListener("change", () => {
+    sortMode = els.sortMode.value as SortMode;
+    renderTable(true);
+    const v = document.getElementById("view-plugins");
+    if (v) v.scrollTop = 0;
+  });
+
+  /** 索引来源与更新时间常显（P1-2） */
+  function renderIndexInfo(): void {
+    const wrap = document.getElementById("plugin-index-info");
+    if (!wrap || !els.indexMeta) return;
+    wrap.hidden = mainTab !== "github";
+    els.indexMeta.textContent = t("plugins.indexInfo", {
+      src: t(`plugins.snapshot.src.${snapshotSource}`),
+      at: snapshot.generated_at ? snapshot.generated_at.slice(0, 16).replace("T", " ") : "—",
+      n: snapshot.count ?? plugins.length,
+    });
+  }
+
   window.addEventListener("lang-changed", () => {
     els.refreshLabel.textContent = t("plugins.refresh");
     void loadInstalled();
-    renderSourceTabs();
+    renderMainTabs();
+    renderGithubViews();
     renderCategories();
     renderOfficial();
     renderTable(true);
     renderBanner();
+    renderIndexInfo();
+    fillModeSelects();
+    refreshToolbarVisibility();
+    els.search.placeholder =
+      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
     updateBadge();
     renderUpdateAllBtn();
+    renderLocalInstalled();
   });
 
   // 初始化：已安装 → 缓存（含 registry 快照 + 版本播种，跳过已安装）→ 秒开渲染快照 → 后台刷新 + 已安装更新检查 + 每 6h 定时
   void (async () => {
     await loadInstalled();
     await loadCache();
-    renderSourceTabs();
+    renderMainTabs();
+    renderGithubViews();
     renderCategories();
+    fillModeSelects();
+    refreshToolbarVisibility();
+    els.search.placeholder = t("plugins.searchGithub");
+    els.githubPanel.hidden = false;
+    els.npmPanel.hidden = true;
+    els.localPanel.hidden = true;
     renderOfficial();
     renderTable(true);
     renderBanner();
+    renderIndexInfo();
+    renderLocalInstalled();
     await checkInstalledUpdates(false);
     updateBadge();
     renderUpdateAllBtn();
@@ -1415,6 +1857,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       void checkInstalledUpdates(true).then(() => {
         updateBadge();
         renderUpdateAllBtn();
+        renderLocalInstalled();
         if (document.getElementById("view-plugins")?.classList.contains("active")) renderTable(false);
       });
     }, UPDATE_CHECK_INTERVAL_MS);
