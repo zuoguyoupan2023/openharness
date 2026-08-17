@@ -954,6 +954,43 @@
     .install-btn:disabled { opacity: 0.4; cursor: wait; }
     .plugin-loading { color: var(--text-faint); font-size: 0.83rem; }
 
+    /* ===== P2 骨架屏（表格首屏 / 官方卡，替代纯文字 loading） ===== */
+    .plugin-skeleton-block {
+      border-radius: 6px;
+      background: linear-gradient(90deg, var(--card-2) 25%, var(--hover) 50%, var(--card-2) 75%);
+      background-size: 200% 100%;
+      animation: skeleton-shimmer 1.4s ease-in-out infinite;
+    }
+    @keyframes skeleton-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 11px 10px; border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+    .skeleton-row:first-child { border-radius: 12px 12px 0 0; }
+    .skeleton-row:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .skeleton-row .sk-pkg { width: 26%; height: 12px; }
+    .skeleton-row .sk-desc { width: 36%; height: 12px; opacity: 0.7; }
+    .skeleton-row .sk-ver { width: 7%; height: 12px; opacity: 0.5; }
+    .skeleton-row .sk-stars { width: 6%; height: 12px; opacity: 0.5; }
+    .skeleton-row .sk-act { width: 12%; height: 18px; margin-left: auto; opacity: 0.6; }
+    .skeleton-official-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 2px 0; }
+    .skeleton-official-card { height: 92px; border-radius: 10px; border: 1px solid var(--border-strong); }
+
+    /* ===== P2 失败重试（版本列 / npm 详情 / npm 搜索的行内重试） ===== */
+    .ver-retry {
+      background: transparent; border: 1px dashed var(--border-strong);
+      color: var(--text-dim); font-size: 0.76rem; cursor: pointer;
+      border-radius: 6px; padding: 1px 6px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .ver-retry:hover { color: var(--link); border-color: var(--link); }
+    .ver-retry svg { width: 11px; height: 11px; }
+    .retry-mini { margin-top: 8px; }
+
     /* ===== P0 交互（状态条 / busy 互斥 / 卸载确认 / 表格哨兵） ===== */
     #plugin-action-status {
       display: flex; align-items: center; gap: 8px;

@@ -836,7 +836,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const meta = await fetchNpmMeta(pkg);
     if (seq !== detailSeq) return; // 详情已关闭或已切换：丢弃过期结果（P0-5）
     if (!meta) {
-      body.innerHTML = `<div class="detail-note">${escHtml(t("plugins.detail.fail"))}</div>`;
+      body.innerHTML = `<div class="detail-note">${escHtml(t("plugins.detail.fail"))}</div>
+        <div><button class="install-btn retry-mini" data-npm-detail-retry data-pkg="${escHtml(pkg)}">${iconSvg("refresh-cw")} ${escHtml(t("plugins.retry"))}</button></div>`;
       return;
     }
     const latest = meta["dist-tags"]?.latest ?? "";
@@ -1040,7 +1041,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
   }
 
   function renderTable(reset = true): void {
-    if (reset) visibleRows = TABLE_PAGE;
+    if (reset) {
+      visibleRows = TABLE_PAGE;
+      visibleVerSeq++; // P2：重新过滤/渲染后，进行中的旧版本批次作废
+    }
     const rows = filtered();
     currentRows = rows;
     els.count.textContent = String(rows.length);
@@ -1063,10 +1067,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       const installedFlag = isInstalled(pkg) || isInstalled(p.name);
       const updatable = isUpdatable(p.name, pkg, versions[pkg]);
 
-      let verHtml = escHtml(ver ?? "—");
-      if (!npm) {
-        verHtml = `<span class="ver-src">${spec.startsWith("github:") ? "github" : "git"}</span>`;
-      }
+      const verHtml = verCellHtml(p, ver);
 
       let tagHtml = "";
       if (isRec) tagHtml = `<span class="tag recommended">${t("plugins.recommendedBadge")}</span>`;
@@ -1108,6 +1109,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       els.tbody.appendChild(tr);
     });
     renderMore(rows.length);
+    void loadVisibleVersions(); // P2：按需为已渲染 npm 行拉取版本（缺失项）
   }
 
   /** 顶部快照/diff 提示条 */
@@ -1139,10 +1141,34 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.banner.appendChild(close);
   }
 
+  // ===== P2 骨架屏（013 §P2：表格首屏 / 官方卡骨架替代纯文字 loading） =====
+  const skeletonRowsHtml = (n = 8): string => {
+    let rows = "";
+    for (let i = 0; i < n; i++) {
+      rows += `<div class="skeleton-row" aria-hidden="true">
+        <div class="plugin-skeleton-block sk-pkg"></div>
+        <div class="plugin-skeleton-block sk-desc"></div>
+        <div class="plugin-skeleton-block sk-ver"></div>
+        <div class="plugin-skeleton-block sk-stars"></div>
+        <div class="plugin-skeleton-block sk-act"></div>
+      </div>`;
+    }
+    return rows;
+  };
+  const skeletonOfficialHtml = (): string => {
+    let cards = "";
+    for (let i = 0; i < OFFICIAL_PKGS.length; i++) {
+      cards += `<div class="skeleton-official-card plugin-skeleton-block" aria-hidden="true"></div>`;
+    }
+    return `<div class="skeleton-official-grid">${cards}</div>`;
+  };
+
   // ================= P0 交互核心（013 已确认）：队列 / 状态条 / 卸载确认 / 分页 / 更新语义 =================
   const TABLE_PAGE = 200;
   let visibleRows = TABLE_PAGE;
   let currentRows: PluginEntry[] = [];
+  let visibleVerSeq = 0; // P2：版本按需加载批次代号（重新过滤/渲染后旧批次作废 = 中断离屏请求）
+  let visibleVerBusy = false; // P2：防并发重复批次
   let actionChain: Promise<void> = Promise.resolve();
   let statusTimer = 0;
   let statusEl: HTMLElement | null = null;
@@ -1188,6 +1214,37 @@ export function initPlugins(opts: PluginCenterOptions): void {
   });
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") resetArmed();
+  });
+
+  // —— P2 失败重试（013 §P2）：行内重试按钮 —— 版本列 / npm 详情 / npm 搜索
+  document.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (!target) return;
+    const verBtn = target.closest<HTMLElement>("[data-retry]");
+    if (verBtn) {
+      ev.stopPropagation();
+      const pkg = verBtn.dataset.retry || "";
+      if (pkg) void retryVersion(pkg);
+      return;
+    }
+    const detailRetry = target.closest<HTMLElement>("[data-npm-detail-retry]");
+    if (detailRetry) {
+      ev.stopPropagation();
+      const pkg = detailRetry.dataset.pkg || "";
+      const host = detailRetry.closest<HTMLElement>(".plugin-detail-row, .npm-result");
+      const bodyEl = host ? (host.querySelector<HTMLElement>(".detail-body, .npm-result-body") ?? host) : null;
+      if (pkg && bodyEl) {
+        detailSeq++;
+        bodyEl.innerHTML = `<div class="detail-note">${escHtml(t("plugins.detail.loading"))}</div>`;
+        void renderNpmDetail(bodyEl, pkg, detailSeq);
+      }
+      return;
+    }
+    const searchRetry = target.closest<HTMLElement>("[data-npm-search-retry]");
+    if (searchRetry) {
+      ev.stopPropagation();
+      void runNpmSearch();
+    }
   });
 
   /** 表格行 / 详情面板的卸载按钮：就地进入「确认卸载 + 取消」，二次点击才执行 */
@@ -1419,6 +1476,22 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
+  /**
+   * 表格行版本单元格 HTML（P2：npm 版本缺失/获取失败显示行内重试按钮；github/本地显示来源徽标）
+   * 渲染与版本异步回包共用，保证两种路径显示一致。
+   */
+  const verCellHtml = (p: PluginEntry, ver: string | undefined | null): string => {
+    if (!p.isNpm) {
+      const spec = p.installSpec;
+      return `<span class="ver-src">${spec.startsWith("github:") ? "github" : "git"}</span>`;
+    }
+    if (!ver || ver === "—") {
+      const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
+      return `<button class="ver-retry" data-act="ver-retry" data-retry="${escHtml(pkg)}" title="${escHtml(t("plugins.versionRetry"))}" aria-label="${escHtml(t("plugins.versionRetry"))}">${escHtml(ver ?? "—")}${iconSvg("refresh-cw")}</button>`;
+    }
+    return escHtml(ver);
+  };
+
   /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装；P1-6 图标按钮带 aria-label） */
   function tableActionsHtmlFor(p: PluginEntry): string {
     const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
@@ -1479,7 +1552,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       if (!p) return;
       const verCell = tr.querySelector<HTMLElement>("td.ver");
       if (verCell) {
-        verCell.innerHTML = p.isNpm ? escHtml(latest || "—") : verCell.innerHTML;
+        verCell.innerHTML = p.isNpm ? verCellHtml(p, latest) : verCell.innerHTML;
       }
       const actionsCell = tr.querySelector<HTMLElement>("td.actions");
       if (actionsCell && p.isNpm) {
@@ -1487,6 +1560,65 @@ export function initPlugins(opts: PluginCenterOptions): void {
         bindRowActions(actionsCell, p);
       }
     });
+  }
+
+  // ===== P2 版本列按需加载（013 §P2：只给已渲染（可视+即将可视）且版本缺失的 npm 行拉取；重渲染后旧批次作废 = 中断离屏请求） =====
+  async function loadVisibleVersions(): Promise<void> {
+    if (mainTab !== "github" || visibleVerBusy) return;
+    const batch = ++visibleVerSeq;
+    const todo: string[] = [];
+    els.tbody.querySelectorAll<HTMLTableRowElement>("tr.plugin-row").forEach((tr) => {
+      const pkg = tr.dataset.pkg || "";
+      if (!pkg) return;
+      const v = versions[pkg];
+      if (v && v !== "—") return; // 已有版本（播种或已拉取）
+      const idx = Number(tr.dataset.idx || "-1");
+      const p = idx >= 0 && idx < currentRows.length ? currentRows[idx] : undefined;
+      if (!p || !p.isNpm) return;
+      if (isInstalled(pkg) || isInstalled(p.name)) return; // 已安装的版本由 checkInstalledUpdates 负责
+      const name = p.pkg_name ?? pkgNameOf(p.installSpec);
+      todo.push(name);
+    });
+    const uniq = [...new Set(todo)];
+    if (!uniq.length) return;
+    visibleVerBusy = true;
+    const changed: Record<string, string> = {};
+    let i = 0;
+    const pool = 3;
+    const worker = async (): Promise<void> => {
+      while (i < uniq.length) {
+        const name = uniq[i++];
+        const v = await fetchVersion(name);
+        if (batch !== visibleVerSeq) return; // 批次过期：重新过滤/渲染过，中断离屏请求
+        if (v !== "—" && v !== versions[name]) changed[name] = v;
+        versions[name] = v;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(pool, uniq.length) }, () => worker()));
+    visibleVerBusy = false;
+    if (batch !== visibleVerSeq) {
+      void loadVisibleVersions(); // 期间发生过重新渲染：被跳过的批次立即补跑，保证最终一致
+      return;
+    }
+    if (Object.keys(changed).length) {
+      refreshRowVersions(changed);
+      await persistCache(false);
+    }
+  }
+
+  /** P2：单行版本重试（行内重试按钮 / verCell 缺失态） */
+  async function retryVersion(pkg: string): Promise<void> {
+    const v = await fetchVersion(pkg);
+    if (!v || v === "—") {
+      setPluginStatus("error", t("plugins.versionFetchFail"));
+      return;
+    }
+    versions[pkg] = v;
+    refreshRowVersions({ [pkg]: v });
+    updateBadge();
+    renderUpdateAllBtn();
+    await persistCache(false);
+    setPluginStatus("ok", t("plugins.versionFetched", { pkg, v }), 3000);
   }
 
   // ===== 本地插件安装（P1-1 / 用户需求：拆「选择目录」「选择 .tgz」两个入口；路径错误在当前页面提示）=====
@@ -1838,7 +1970,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
       }
     } catch (e) {
       if (seq !== npmSearchSeq) return;
-      els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearchFail", { err: String(e) }))}</div>`;
+      els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearchFail", { err: String(e) }))}</div>
+        <div><button class="install-btn retry-mini" data-npm-search-retry>${iconSvg("refresh-cw")} ${escHtml(t("plugins.retry"))}</button></div>`;
     } finally {
       if (seq === npmSearchSeq) els.npmGo.disabled = false;
     }
@@ -1921,6 +2054,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
   // 初始化：已安装 → 缓存（含 registry 快照 + 版本播种，跳过已安装）→ 秒开渲染快照 → 后台刷新 + 已安装更新检查 + 每 6h 定时
   void (async () => {
+    // P2：数据就绪前显示骨架屏（表格行 + 官方卡），替代纯文字 loading
+    els.loading.innerHTML = skeletonRowsHtml();
+    els.loading.style.display = "block";
+    els.official.innerHTML = skeletonOfficialHtml();
     await loadInstalled();
     await loadCache();
     renderMainTabs();
