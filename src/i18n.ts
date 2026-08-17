@@ -36,6 +36,7 @@ const DICT: Record<string, Entry> = {
   "url.reload": { zh: "刷新", en: "Reload" },
   "url.home": { zh: "新标签页主页", en: "Home / new tab" },
   "url.history": { zh: "历史记录", en: "History" },
+  "url.downloads": { zh: "下载记录", en: "Downloads" },
   "url.go": { zh: "前往", en: "Go" },
   "url.placeholder": {
     zh: "输入网址或搜索内容，回车前往…",
@@ -56,6 +57,23 @@ const DICT: Record<string, Entry> = {
   "history.yesterday": { zh: "昨天", en: "Yesterday" },
   "history.earlier": { zh: "更早", en: "Earlier" },
   "history.empty": { zh: "暂无浏览记录", en: "No browsing history" },
+
+  // ===== 下载记录 =====
+  "downloads.title": { zh: "下载记录", en: "Downloads" },
+  "downloads.clear": { zh: "清空记录", en: "Clear" },
+  "downloads.empty": { zh: "暂无下载记录", en: "No downloads yet" },
+  "downloads.downloading": { zh: "下载中…", en: "Downloading…" },
+  "downloads.completed": { zh: "已完成", en: "Completed" },
+  "downloads.failed": { zh: "失败", en: "Failed" },
+  "downloads.pathLabel": { zh: "保存到", en: "Saved to" },
+  "downloads.defaultDir": { zh: "默认下载目录", en: "Default location" },
+  "downloads.changePath": { zh: "修改目录", en: "Change…" },
+  "downloads.openFile": { zh: "打开文件", en: "Open file" },
+  "downloads.openFolder": { zh: "所在文件夹", en: "Show in folder" },
+  "downloads.remove": { zh: "删除记录", en: "Remove" },
+  "downloads.pathChanged": { zh: "✓ 下载目录已更新，之后的下载保存到新目录", en: "✓ Download folder updated — new downloads go there" },
+  "downloads.pathReset": { zh: "✓ 已恢复为系统默认下载目录", en: "✓ Restored to system default download folder" },
+  "downloads.errChange": { zh: "修改下载目录失败: ", en: "Failed to change download folder: " },
 
   // ===== 对话视图 =====
   "chat.waiting": { zh: "正在启动 DeepSeek Harness，请稍候…", en: "Starting DeepSeek Harness, please wait…" },
@@ -306,6 +324,14 @@ const DICT: Record<string, Entry> = {
 
   // ===== 设置 =====
   "settings.title": { zh: "设置", en: "Settings" },
+  "settings.download.title": { zh: "下载位置", en: "Download folder" },
+  "settings.download.desc": {
+    zh: "网页标签内下载文件的保存目录。默认使用系统下载文件夹，可改为任意目录；对之后的下载立即生效。",
+    en: "Where files downloaded from tabs are saved. Defaults to the system download folder; you can pick any folder. Applies to new downloads immediately.",
+  },
+  "settings.download.change": { zh: "修改", en: "Change…" },
+  "settings.download.reset": { zh: "恢复默认", en: "Reset" },
+  "settings.download.usingDefault": { zh: "默认", en: "Default" },
   "settings.registry.title": { zh: "npm 镜像源", en: "npm registry" },
   "settings.registry.desc": {
     zh: "影响首次下载 DSH 与安装插件（npx / pnpm 全链路生效）。已缓存的包不受影响；镜像对新发布包的同步可能有几分钟延迟，若安装报 404 可到 npmmirror.com/sync 手动触发同步。",

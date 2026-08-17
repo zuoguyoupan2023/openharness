@@ -513,6 +513,166 @@
       font-size: 0.82rem;
     }
 
+    /* ===== 下载记录独立标签页（文件名 / 来源 / 状态 / 路径） ===== */
+    .downloads-page {
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+      overflow-y: auto;
+      height: 100%;
+    }
+    .downloads-page-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 6px;
+    }
+    .downloads-page-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .downloads-clear-btn { font-size: 0.78rem; }
+    .downloads-path-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: var(--card-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      font-size: 0.78rem;
+    }
+    .downloads-path-row .dl-path-icon {
+      flex: 0 0 auto;
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.95rem;
+    }
+    .downloads-path-row .dl-path-value {
+      flex: 1;
+      min-width: 0;
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl; /* 长路径从尾部截断，保留目录名 */
+      text-align: left;
+    }
+    .downloads-path-row .dl-path-default {
+      flex: 0 0 auto;
+      font-size: 0.68rem;
+      color: var(--text-faint);
+      background: var(--hover);
+      padding: 1px 8px;
+      border-radius: 999px;
+    }
+    .downloads-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+    }
+    .downloads-item:hover { background: var(--hover); }
+    .downloads-item .dl-icon {
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+    }
+    .downloads-item .dl-icon.downloading { background: var(--accent-soft, var(--hover)); color: var(--accent); }
+    .downloads-item .dl-icon.completed { background: var(--hover); color: var(--ok, #2ecc71); }
+    .downloads-item .dl-icon.failed { background: var(--hover); color: var(--danger, #e74c3c); }
+    .downloads-item .dl-main { flex: 1; min-width: 0; }
+    .downloads-item .dl-name {
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: var(--text-bright);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .downloads-item .dl-url {
+      font-size: 0.7rem;
+      color: var(--text-faint);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .downloads-item .dl-pathline {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .downloads-item .dl-side {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+    .downloads-item .dl-status {
+      font-size: 0.7rem;
+      font-weight: 500;
+      padding: 1px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .downloads-item .dl-status.downloading { color: var(--accent); background: var(--accent-soft, var(--hover)); }
+    .downloads-item .dl-status.completed { color: var(--ok, #27ae60); background: var(--hover); }
+    .downloads-item .dl-status.failed { color: var(--danger, #e74c3c); background: var(--hover); }
+    .downloads-item .dl-time { font-size: 0.66rem; color: var(--text-faint); }
+    .downloads-item .dl-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .downloads-item .dl-actions .btn-icon {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      height: auto;
+    }
+    .downloads-item .dl-del {
+      flex: 0 0 auto;
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 2px 4px;
+      border-radius: 6px;
+    }
+    .downloads-item .dl-del:hover { color: var(--danger, #e74c3c); background: var(--hover); }
+    .downloads-hint {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 400;
+      background: var(--panel);
+      border: 1px solid var(--accent-border);
+      color: var(--text-bright);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
     /* ===== 链接打开方式对话框 ===== */
     .link-dialog {
       position: fixed;
@@ -1695,6 +1855,9 @@
         <button class="url-btn" id="url-history" data-i18n-title="url.history">
           <i data-icon="clock"></i>
         </button>
+        <button class="url-btn" id="url-downloads" data-i18n-title="url.downloads">
+          <i data-icon="download"></i>
+        </button>
       </div>
       <div id="iframe-stack"></div>
     </section>
@@ -1890,6 +2053,28 @@
             <span data-i18n="settings.dsh.restart">重启 DSH</span>
           </button>
           <span id="settings-lc-saved" class="setting-saved"></span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="download"></i>
+          <span data-i18n="settings.download.title">下载位置</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.download.desc">
+          网页标签内下载文件的保存目录。默认使用系统下载文件夹，可改为任意目录；对之后的下载立即生效。
+        </div>
+        <div class="setting-row">
+          <span id="settings-download-dir" class="dl-path-value" style="flex:1;min-width:0;color:var(--text);">…</span>
+          <button id="settings-download-change" class="btn-icon">
+            <i data-icon="folder-open"></i>
+            <span data-i18n="settings.download.change">修改</span>
+          </button>
+          <button id="settings-download-reset" class="btn-icon secondary">
+            <i data-icon="refresh-cw"></i>
+            <span data-i18n="settings.download.reset">恢复默认</span>
+          </button>
+          <span id="settings-download-saved" class="setting-saved"></span>
         </div>
       </div>
 

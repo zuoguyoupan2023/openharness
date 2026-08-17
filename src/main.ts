@@ -32,8 +32,10 @@ import { mountIcons, iconSvg } from "./icons";
 import { initLang, setLang, getLang, t } from "./i18n";
 import { initTheme, cycleTheme, effectiveTheme, getThemePref } from "./theme";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
 import { startDshSettingsSync, pushPref } from "./dsh-settings";
 import { registerLinkOpener, openLink } from "./open-link";
+import { recordDownloadStart, markDownloadEnd } from "./downloads";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -414,6 +416,24 @@ async function boot(): Promise<void> {
   $("url-history").addEventListener("click", () => {
     tabManager.openHistoryTab();
     switchView("chat");
+  });
+
+  // ===== 下载记录：独立标签页（Chrome 风格，按钮位于历史按钮右侧） =====
+  $("url-downloads").addEventListener("click", () => {
+    tabManager.openDownloadsTab();
+    switchView("chat");
+  });
+
+  // Rust 端下载事件 → 写入下载记录，并刷新下载记录标签页（若正被激活）
+  void listen<Record<string, unknown>>("download-start", (e) => {
+    const p = (e.payload ?? {}) as { url?: string; filename?: string; path?: string };
+    if (p.url) recordDownloadStart(p.url, p.filename || "", p.path || "");
+    tabManager.refreshDownloads();
+  });
+  void listen<Record<string, unknown>>("download-complete", (e) => {
+    const p = (e.payload ?? {}) as { url?: string; success?: boolean };
+    if (p.url) markDownloadEnd(p.url, p.success !== false);
+    tabManager.refreshDownloads();
   });
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));

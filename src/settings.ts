@@ -1,10 +1,11 @@
 // src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 更新、默认标签页）
 import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode, DSH_URL } from "./dsh";
-import { getSettings, setRegistry, setCloseWithApp, setDefaultTabs, setRestoreSession, NPM_MIRROR } from "./config";
+import { getSettings, setRegistry, setCloseWithApp, setDefaultTabs, setRestoreSession, setDownloadDir, getDownloadDir, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
 import { getLinkMode, setLinkMode, LinkOpenMode } from "./open-link";
 import { getIndexSourcePref, getIndexSourceCustom, setIndexSourcePref, getIndexSourceGitee, setIndexSourceGitee, getDefaultGiteeUrl, type IndexSource } from "./plugin-sources";
+import { pickDownloadDir } from "./downloads";
 
 export function initSettings(): void {
   const radios = document.getElementsByName("registry") as NodeListOf<HTMLInputElement>;
@@ -464,4 +465,54 @@ export function initSettings(): void {
     if (restoreSessionEl) restoreSessionEl.checked = s.restoreSession !== false;
     renderDefaultTabs();
   });
+
+  // ===== 下载位置（设置页）：显示当前生效目录，可修改 / 恢复默认 =====
+  const dlDirEl = document.getElementById("settings-download-dir") as HTMLElement | null;
+  const dlChangeBtn = document.getElementById("settings-download-change") as HTMLButtonElement | null;
+  const dlResetBtn = document.getElementById("settings-download-reset") as HTMLButtonElement | null;
+  const dlSaved = document.getElementById("settings-download-saved") as HTMLSpanElement | null;
+
+  const dlMsg = (m: string): void => {
+    if (dlSaved) {
+      dlSaved.textContent = m;
+      window.setTimeout(() => {
+        dlSaved.textContent = "";
+      }, 5000);
+    }
+  };
+
+  const syncDownloadDir = async (): Promise<void> => {
+    if (!dlDirEl) return;
+    try {
+      const info = await getDownloadDir();
+      dlDirEl.textContent = info.effective || "—";
+      dlDirEl.title = info.effective;
+    } catch {
+      dlDirEl.textContent = "—";
+    }
+  };
+
+  dlChangeBtn?.addEventListener("click", async () => {
+    const dir = await pickDownloadDir();
+    if (!dir) return;
+    try {
+      await setDownloadDir(dir);
+      dlMsg(t("downloads.pathChanged"));
+      void syncDownloadDir();
+    } catch (e) {
+      dlMsg(t("downloads.errChange") + String(e));
+    }
+  });
+
+  dlResetBtn?.addEventListener("click", async () => {
+    try {
+      await setDownloadDir("");
+      dlMsg(t("downloads.pathReset"));
+      void syncDownloadDir();
+    } catch (e) {
+      dlMsg(t("downloads.errChange") + String(e));
+    }
+  });
+
+  void syncDownloadDir();
 }

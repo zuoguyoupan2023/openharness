@@ -18,6 +18,16 @@ export interface Settings {
   defaultTabs: string[];
   /** 启动时是否恢复上次会话（默认 true） */
   restoreSession: boolean;
+  /** 网页标签下载保存目录；null / 空 = 系统默认下载目录 */
+  downloadDir: string | null;
+}
+
+/** 下载目录查询结果 */
+export interface DownloadDirInfo {
+  /** 用户配置的目录；未配置为 null */
+  configured: string | null;
+  /** 当前实际生效的绝对路径（配置优先，否则系统默认下载目录） */
+  effective: string;
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -31,8 +41,19 @@ export async function getSettings(): Promise<Settings> {
       dshUpdateMode: "auto",
       defaultTabs: [],
       restoreSession: true,
+      downloadDir: null,
     };
   }
+}
+
+/** 查询当前实际生效的下载目录 */
+export async function getDownloadDir(): Promise<DownloadDirInfo> {
+  return invoke<DownloadDirInfo>("get_download_dir");
+}
+
+/** 设置下载目录（空串 = 恢复系统默认） */
+export async function setDownloadDir(dir: string): Promise<Settings> {
+  return invoke<Settings>("set_download_dir", { dir });
 }
 
 export async function setDefaultTabs(tabs: string[]): Promise<Settings> {

@@ -53,6 +53,62 @@ const LINK_CLICK_FIX: &str = r#"(function(){
   }, true);
 })();"#;
 
+/// 注入网页的下载浮窗守护脚本（右上角）：显示 文件名 / 状态 / 保存位置。
+/// - 点击浮窗外部（空白处）关闭；
+/// - 下载完成 / 失败后停留 3s 自动消失；下载中最多停留 60s 兜底。
+/// 由于网页标签是叠在壳 HTML 之上的原生 webview，浮窗必须注入到网页内部渲染，
+/// Rust 侧在下载事件到达时通过 webview.eval() 调用 window.__ohDownloadToast.show()。
+const DOWNLOAD_TOAST_SCRIPT: &str = r#"(function () {
+  if (document.getElementById("__oh-download-toast")) return;
+  var root = document.createElement("div");
+  root.id = "__oh-download-toast";
+  var S = root.style;
+  S.position = "fixed"; S.top = "14px"; S.right = "14px";
+  S.zIndex = "2147483647";
+  S.width = "280px"; S.maxWidth = "calc(100vw - 28px)";
+  S.background = "rgba(18,18,20,0.92)";
+  S.color = '#e8e8ea';
+  S.borderRadius = "10px";
+  S.boxShadow = "0 8px 32px rgba(0,0,0,0.45)";
+  S.padding = "10px 12px";
+  S.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  S.fontSize = "12px"; S.lineHeight = "1.45";
+  S.boxSizing = "border-box"; S.cursor = "default";
+  S.display = "none";
+  var timer = null;
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function hide() {
+    root.style.display = "none";
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+  function show(info) {
+    info = info || {};
+    var st = info.status || "downloading";
+    var stHtml = st === "completed" ? '<span style="color:#4ade80">✓ 已完成</span>'
+      : st === "failed" ? '<span style="color:#f87171">✗ 失败</span>'
+      : '<span style="color:#60a5fa">⇣ 下载中…</span>';
+    root.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:6px;">' +
+        '<span style="color:#60a5fa;flex:none">⇣</span>' +
+        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px;">' + esc(info.filename || "下载") + '</span>' +
+        stHtml +
+      '</div>' +
+      '<div style="color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(info.path || "") + '">保存至 <span style="color:#d1d5db">' + esc(info.path || "—") + '</span></div>';
+    root.style.display = "block";
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(hide, st === "downloading" ? 60000 : 3000);
+  }
+  document.addEventListener("mousedown", function (e) {
+    if (root.style.display !== "none" && root.contains(e.target) === false) hide();
+  }, true);
+  (document.body || document.documentElement).appendChild(root);
+  window.__ohDownloadToast = { show: show, hide: hide };
+})();"#;
+
 /// 预装插件清单：发布到 npm 后，取消注释对应元素即可自动预装。
 /// 逻辑已完整实现（幂等：已安装则跳过；先于 web 启动，串行避免 npx/pnpm 并发锁）。
 /// 四件套：adhdgofly-dsh-ext（POS 高亮）+ openharness-reader（文件阅读/编辑/MD 预览）
@@ -112,6 +168,10 @@ struct Settings {
     /// 启动时是否恢复上次会话（关闭 app 前打开过的标签；默认开启，对齐 Safari）
     #[serde(default = "default_true")]
     restore_session: bool,
+    /// 网页标签下载的保存目录；None / 空串 = 系统默认下载目录（macOS ~/Downloads）。
+    /// 由用户通过「设置 → 下载位置」或「下载记录页」修改。
+    #[serde(default)]
+    download_dir: Option<String>,
 }
 
 /// 缺失字段的默认值；close_with_app 缺省为 true（随 app 关闭）
@@ -137,11 +197,12 @@ impl Default for Settings {
             dsh_update_mode: "auto".to_string(),
             default_tabs: Vec::new(),
             restore_session: true,
+            download_dir: None,
         }
     }
 }
 
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn settings_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
@@ -149,7 +210,7 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
-fn load_settings(app: &AppHandle) -> Settings {
+fn load_settings<R: tauri::Runtime>(app: &AppHandle<R>) -> Settings {
     let Ok(p) = settings_path(app) else {
         return Settings::default();
     };
@@ -159,7 +220,7 @@ fn load_settings(app: &AppHandle) -> Settings {
         .unwrap_or_default()
 }
 
-fn save_settings(app: &AppHandle, s: &Settings) -> Result<(), String> {
+fn save_settings<R: tauri::Runtime>(app: &AppHandle<R>, s: &Settings) -> Result<(), String> {
     let p = settings_path(app)?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("❌ 无法创建配置目录: {}", e))?;
@@ -460,6 +521,238 @@ fn set_restore_session(app: AppHandle, enabled: bool) -> Result<Settings, String
     s.restore_session = enabled;
     save_settings(&app, &s)?;
     Ok(s)
+}
+
+// ============================ 网页标签下载（保存目录 + 进度记录） ============================
+// 下载由系统 WKWebView（wry 0.55 的 download_started/completed handler）原生接管：
+// 保留网页会话 Cookie、自动处理 Content-Disposition 文件名与重定向，最可靠。
+// 前端通过 download-start / download-complete 事件获得「开始 / 完成 / 失败」状态并写入下载记录页。
+
+/// 进行中的下载：URL → 目标绝对路径。
+/// macOS 的 download_completed 回调不携带最终路径（传 None），因此开始阶段记录映射、
+/// 结束阶段按 URL 查回路径。同一 URL 并发下载极罕见，直接以 URL 为主键足够。
+static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// 下载事件负载（download-start / download-complete 共用）
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadEvent {
+    /// 下载来源 URL
+    url: String,
+    /// 建议/保存的文件名（completed 事件中为空，前端从 start 事件记录）
+    filename: String,
+    /// 目标绝对路径
+    path: String,
+    /// started | completed | failed
+    status: String,
+    /// completed 时表示是否成功；started 恒为 true
+    success: bool,
+    /// 触发下载的 webview 标签 id（用于把浮窗推送到对应网页内）
+    webview_id: String,
+}
+
+/// 设置「网页标签下载保存目录」；空串 = 恢复系统默认下载目录
+#[tauri::command]
+fn set_download_dir(app: AppHandle, dir: String) -> Result<Settings, String> {
+    let mut s = load_settings(&app);
+    let d = dir.trim().to_string();
+    s.download_dir = if d.is_empty() { None } else { Some(d) };
+    save_settings(&app, &s)?;
+    Ok(s)
+}
+
+/// 下载目录信息：configured = 用户配置（未配置为 null）；effective = 当前实际生效的绝对路径
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadDirInfo {
+    configured: Option<String>,
+    effective: String,
+}
+
+/// 查询当前下载目录：用户配置优先，否则系统默认下载目录
+#[tauri::command]
+fn get_download_dir(app: AppHandle) -> DownloadDirInfo {
+    let s = load_settings(&app);
+    let configured = s
+        .download_dir
+        .as_deref()
+        .filter(|d| !d.trim().is_empty())
+        .map(|d| d.trim().to_string());
+    let effective = configured
+        .clone()
+        .or_else(|| app.path().download_dir().ok().map(|p| p.display().to_string()))
+        .unwrap_or_default();
+    DownloadDirInfo { configured, effective }
+}
+
+/// 过滤文件名中的路径分隔符与危险字符（Content-Disposition 由网络来源决定，不可直接信任）；
+/// 空结果退回默认名。
+fn sanitize_filename(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+                || c == '"' || c == '<' || c == '>' || c == '|'
+            {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.trim().trim_matches('.').trim();
+    if clean.is_empty() {
+        "download".to_string()
+    } else {
+        clean.to_string()
+    }
+}
+
+/// 把文件名切成 (基础名, 扩展名含点)；无扩展名时扩展名为空串
+fn split_ext(name: &str) -> (String, String) {
+    match name.rfind('.') {
+        Some(idx) if idx > 0 => (
+            name[..idx].to_string(),
+            name[idx..].to_string(),
+        ),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+/// 计算下载目标路径：用户配置目录 + 建议文件名；同名文件自动追加 " (1)"、" (2)"…
+fn download_destination<R: tauri::Runtime>(app: &AppHandle<R>, dest: &PathBuf) -> Option<PathBuf> {
+    // 1) 用户自定义目录（设置里保存）→ 2) 系统默认下载目录 → 3) 兜底临时目录
+    let settings = load_settings(app);
+    let dir: PathBuf = settings
+        .download_dir
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| app.path().download_dir().ok())
+        .unwrap_or_else(|| std::env::temp_dir());
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("创建下载目录失败 {dir:?}: {e}");
+        return None;
+    }
+    // 建议文件名：优先取 wry 传入 suggeted_filename（来自 Content-Disposition / URL 尾部）
+    let filename = dest
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .map(|s| sanitize_filename(&s))
+        .unwrap_or_else(|| "download".to_string());
+    let mut path = dir.join(&filename);
+    let mut counter = 1;
+    while path.exists() {
+        let (base, ext) = split_ext(&filename);
+        path = dir.join(format!("{base} ({counter}){ext}"));
+        counter += 1;
+    }
+    Some(path)
+}
+
+/// 向指定 webview 的注入浮窗推送内容（网页内右上角飘窗）。
+/// webview 可能已销毁 / 注入脚本尚未就绪：静默忽略。
+fn toast_eval<R: tauri::Runtime>(app: &AppHandle<R>, wv_id: &str, payload: serde_json::Value) {
+    let Some(reg) = app.try_state::<WebviewRegistry>() else {
+        return;
+    };
+    let wv = reg.0.lock().unwrap().get(wv_id).cloned();
+    if let Some(wv) = wv {
+        let js = format!(
+            "window.__ohDownloadToast && window.__ohDownloadToast.show({})",
+            payload
+        );
+        let _ = wv.eval(&js);
+    }
+}
+
+/// 在 webview 上挂载下载回调（下载开始 → 定位到用户目录并告知前端；完成/失败 → 告知前端）。
+/// webview_create 中每个网页/DSH 标签的 builder 都调用一次；id 是该 webview 的标签 id，
+/// 用于把「右上角下载浮窗」推送到对应网页内部（网页内 JS 由 DOWNLOAD_TOAST_SCRIPT 注入）。
+/// 走 tauri 2.11 的 on_download（内部映射到 wry 的 download_started/completed handler）。
+fn attach_download_handlers<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    builder: tauri::WebviewBuilder<R>,
+) -> tauri::WebviewBuilder<R> {
+    let app_started = app.clone();
+    let app_completed = app.clone();
+    let wv_id = id.to_string();
+    builder.on_download(
+        move |_webview, event| match event {
+            tauri::webview::DownloadEvent::Requested { url, destination } => {
+                // 定位到用户配置的下载目录（自动重名规避），并通知前端「下载开始」
+                let Some(path) = download_destination(&app_started, destination) else {
+                    return false; // 目录不可用：拒绝下载
+                };
+                let path_str = path.display().to_string();
+                let filename = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                *destination = path;
+                ACTIVE_DOWNLOADS
+                    .lock()
+                    .unwrap()
+                    .insert(url.to_string(), path_str.clone());
+                let _ = app_started.emit(
+                    "download-start",
+                    DownloadEvent {
+                        url: url.to_string(),
+                        filename: filename.clone(),
+                        path: path_str.clone(),
+                        status: "started".into(),
+                        success: true,
+                        webview_id: wv_id.clone(),
+                    },
+                );
+                // 网页内浮窗：下载中
+                toast_eval(
+                    &app_started,
+                    &wv_id,
+                    serde_json::json!({
+                        "status": "downloading",
+                        "filename": filename,
+                        "path": path_str,
+                    }),
+                );
+                true
+            }
+            tauri::webview::DownloadEvent::Finished {
+                url,
+                path: _,
+                success,
+            } => {
+                // macOS Finished 事件的 path 恒为 None，故从 ACTIVE_DOWNLOADS 查回开始阶段定的路径
+                let path = ACTIVE_DOWNLOADS.lock().unwrap().remove(&url.to_string());
+                let stored = path.unwrap_or_default();
+                let _ = app_completed.emit(
+                    "download-complete",
+                    DownloadEvent {
+                        url: url.to_string(),
+                        filename: String::new(),
+                        path: stored.clone(),
+                        status: if success { "completed" } else { "failed" }.into(),
+                        success,
+                        webview_id: wv_id.clone(),
+                    },
+                );
+                // 网页内浮窗：完成 / 失败（3s 后由守护脚本自动消失）
+                toast_eval(
+                    &app_completed,
+                    &wv_id,
+                    serde_json::json!({
+                        "status": if success { "completed" } else { "failed" },
+                        "filename": "",
+                        "path": stored,
+                    }),
+                );
+                true
+            }
+            _ => true, // 其它下载事件（预留）：不阻止
+        },
+    )
 }
 
 /// 当前 DSH web 的主题 / 语言偏好快照（供壳 UI 与其双向同步）
@@ -1999,40 +2292,45 @@ async fn webview_create(
     let app_nav = app.clone();
     let app_new = app.clone();
     let app_title = app.clone();
-    let builder = tauri::WebviewBuilder::new(label.clone(), tauri::WebviewUrl::External(parsed))
-        .user_agent(WEBVIEW_USER_AGENT)
-        .initialization_script(LINK_CLICK_FIX)
-        .on_navigation(move |u| {
-            // 导航开始（链接点击 / 重定向 / 前进后退）：同步网址栏与历史栈
-            let _ = app_nav.emit(
-                "webview-nav",
-                WebviewEvent {
-                    id: label_nav.clone(),
-                    url: u.to_string(),
-                },
-            );
-            true
-        })
-        .on_new_window(move |u, _features| {
-            // window.open / target=_blank：不开新 OS 窗口，交给前端开新标签
-            let _ = app_new.emit(
-                "webview-new-window",
-                WebviewEvent {
-                    id: label_new.clone(),
-                    url: u.to_string(),
-                },
-            );
-            NewWindowResponse::Deny
-        })
-        .on_document_title_changed(move |_wv, title| {
-            let _ = app_title.emit(
-                "webview-title",
-                WebviewTitleEvent {
-                    id: label_title.clone(),
-                    title,
-                },
-            );
-        });
+    let builder = attach_download_handlers(
+        &app,
+        &label,
+        tauri::WebviewBuilder::new(label.clone(), tauri::WebviewUrl::External(parsed))
+            .user_agent(WEBVIEW_USER_AGENT)
+            .initialization_script(LINK_CLICK_FIX)
+            .initialization_script(DOWNLOAD_TOAST_SCRIPT)
+            .on_navigation(move |u| {
+                // 导航开始（链接点击 / 重定向 / 前进后退）：同步网址栏与历史栈
+                let _ = app_nav.emit(
+                    "webview-nav",
+                    WebviewEvent {
+                        id: label_nav.clone(),
+                        url: u.to_string(),
+                    },
+                );
+                true
+            })
+            .on_new_window(move |u, _features| {
+                // window.open / target=_blank：不开新 OS 窗口，交给前端开新标签
+                let _ = app_new.emit(
+                    "webview-new-window",
+                    WebviewEvent {
+                        id: label_new.clone(),
+                        url: u.to_string(),
+                    },
+                );
+                NewWindowResponse::Deny
+            })
+            .on_document_title_changed(move |_wv, title| {
+                let _ = app_title.emit(
+                    "webview-title",
+                    WebviewTitleEvent {
+                        id: label_title.clone(),
+                        title,
+                    },
+                );
+            }),
+    );
     let window = main_window(&app)?;
     let webview = window
         .add_child(
@@ -2368,6 +2666,8 @@ fn main() {
             set_dsh_update_mode,
             set_default_tabs,
             set_restore_session,
+            set_download_dir,
+            get_download_dir,
             dsh_settings_snapshot,
             dsh_settings_set,
             dsh_settings_subscribe,

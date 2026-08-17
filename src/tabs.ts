@@ -6,12 +6,18 @@ import { DSH_URL } from "./dsh";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t } from "./i18n";
 import { openLink } from "./open-link";
 import { recordHistory, renderHistoryPage, clearHistory } from "./history";
 import { getSettings } from "./config";
+import {
+  renderDownloadsPage,
+  clearDownloads,
+  removeDownload,
+} from "./downloads";
 
-export type TabType = "dsh" | "web" | "blank" | "history";
+export type TabType = "dsh" | "web" | "blank" | "history" | "downloads";
 
 export interface TabData {
   id: string;
@@ -331,6 +337,13 @@ export class TabManager {
     else this.addTab("history");
   }
 
+  /** 打开/激活下载记录标签页：已有则激活，否则新建 */
+  openDownloadsTab(): void {
+    const existing = this.tabs.find((t) => t.type === "downloads");
+    if (existing) this.activate(existing.id);
+    else this.addTab("downloads");
+  }
+
   addTab(type: TabType, url?: string, activate = true): TabData {
     const u = url ?? (type === "dsh" ? DSH_URL : "");
     const tab: TabData = {
@@ -340,9 +353,11 @@ export class TabManager {
           ? "DeepSeek Harness"
           : type === "history"
             ? t("history.title")
-            : type === "blank"
-              ? t("tab.untitled")
-              : hostOf(u),
+            : type === "downloads"
+              ? t("downloads.title")
+              : type === "blank"
+                ? t("tab.untitled")
+                : hostOf(u),
       url: u,
       type,
       history: u ? [u] : [],
@@ -384,9 +399,12 @@ export class TabManager {
       if (pane) pane.style.display = t.id === id ? "flex" : "none";
     });
     this.ensurePane(tab);
-    // 历史标签每次激活刷新内容（数据可能已变化）
+    // 历史 / 下载记录标签每次激活刷新内容（数据可能已变化）
     if (tab.type === "history") {
       this.renderHistoryPane(this.ensurePane(tab));
+    }
+    if (tab.type === "downloads") {
+      void this.renderDownloadsPane(this.ensurePane(tab));
     }
     this.renderTabBar();
     this.syncUrlBar();
@@ -402,6 +420,7 @@ export class TabManager {
     if (!url) return;
     if (tab.type === "blank") tab.type = "web";
     if (tab.type === "history") tab.type = "web"; // 在历史标签输入地址 → 转为普通网页标签
+    if (tab.type === "downloads") tab.type = "web"; // 在下载记录标签输入地址 → 转为普通网页标签
     if (tab.type === "dsh" && url !== DSH_URL) tab.type = "web";
     // 历史栈：截断前进记录，压入新记录
     tab.history = tab.history.slice(0, tab.historyIdx + 1);
@@ -516,7 +535,7 @@ export class TabManager {
           id: tab.id,
           title: tab.title || t("tab.untitled"),
           url: tab.url || "",
-          type: tab.type === "dsh" ? "dsh" : tab.type === "blank" ? "blank" : tab.type === "history" ? "history" : "web",
+          type: tab.type === "dsh" ? "dsh" : tab.type === "blank" ? "blank" : tab.type === "history" ? "history" : tab.type === "downloads" ? "downloads" : "web",
           history: Array.isArray(tab.history) ? tab.history : tab.url ? [tab.url] : [],
           historyIdx:
             typeof tab.historyIdx === "number" && tab.historyIdx >= 0 ? tab.historyIdx : 0,
@@ -575,6 +594,8 @@ export class TabManager {
       });
     } else if (tab.type === "history") {
       this.renderHistoryPane(pane);
+    } else if (tab.type === "downloads") {
+      void this.renderDownloadsPane(pane);
     } else if (tab.type === "dsh") {
       // 已就绪的 DSH 标签：iframe 不加载（内容由原生 webview 承载），等待激活时创建/显示
       overlay.style.display = "none";
@@ -611,6 +632,39 @@ export class TabManager {
       },
       onClear: () => clearHistory(),
     });
+  }
+
+  /** 下载记录标签页内容渲染（激活时 / 下载事件到达时重新渲染，保证数据最新） */
+  private renderDownloadsPane(pane: HTMLElement): void {
+    const overlay = pane.querySelector<HTMLElement>(".tab-overlay")!;
+    overlay.style.display = "flex";
+    void renderDownloadsPage(overlay, {
+      onChangePath: () => this.renderDownloadsPane(pane),
+      onResetPath: () => this.renderDownloadsPane(pane),
+      onClear: () => {
+        clearDownloads();
+        this.renderDownloadsPane(pane);
+      },
+      onRemove: (item) => {
+        removeDownload(item.id);
+        this.renderDownloadsPane(pane);
+      },
+      onOpenFile: (item) => {
+        if (item.path) void openPath(item.path).catch(() => {});
+      },
+      onReveal: (item) => {
+        if (item.path) void revealItemInDir(item.path).catch(() => {});
+      },
+    });
+  }
+
+  /** 下载事件到达：若下载记录标签正在激活显示，刷新其内容（未激活时激活时自会渲染） */
+  refreshDownloads(): void {
+    const active = this.getActive();
+    if (active && active.type === "downloads") {
+      const pane = this.stackEl.querySelector<HTMLElement>(`[data-id="${active.id}"]`);
+      if (pane) void this.renderDownloadsPane(pane);
+    }
   }
 
   private loadUrl(tab: TabData, url: string): void {
