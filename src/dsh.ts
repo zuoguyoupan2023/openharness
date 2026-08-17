@@ -61,6 +61,27 @@ export async function restartDsh(): Promise<string> {
   return invoke<string>("restart_dsh");
 }
 
+// ===== DSH 版本管理（版本检查 / 锁定） =====
+
+export interface DshVersionInfo {
+  /** 当前实际使用（将使用）的版本；不可用时为 null */
+  current: string | null;
+  /** registry 上最新版本；不可用时为 null */
+  latest: string | null;
+  /** 锁定版本（未锁定为 null） */
+  locked: string | null;
+}
+
+/** 版本信息：当前使用 / 最新 / 锁定（设置页「DSH 运行时版本」卡片） */
+export function getDshVersionInfo(): Promise<DshVersionInfo> {
+  return invoke<DshVersionInfo>("dsh_version_info");
+}
+
+/** 锁定 / 解锁 DSH 版本：传版本号锁定；传 null 解锁（跟随最新）。改动需重启 DSH 生效。 */
+export function setDshVersionLock(version: string | null): Promise<unknown> {
+  return invoke("set_dsh_version_lock", { version });
+}
+
 export async function runDshCmd(args: string[]): Promise<string> {
   return invoke<string>("run_dsh_cmd", { args });
 }

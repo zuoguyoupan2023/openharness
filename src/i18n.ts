@@ -343,6 +343,28 @@ const DICT: Record<string, Entry> = {
   "settings.dsh.savedOff": { zh: "✓ 已保存：3080 将不随 app 关闭（退出后 DSH 继续运行）", en: "Saved: DSH keeps running after the app quits" },
   "settings.dsh.restarting": { zh: "正在重启 DSH…", en: "Restarting DSH…" },
   "settings.dsh.restarted": { zh: "✓ DSH 已重启", en: "DSH restarted" },
+
+  // ===== DSH 运行时版本（版本检查 / 锁定） =====
+  "settings.version.title": { zh: "DSH 运行时版本", en: "DSH runtime version" },
+  "settings.version.desc": {
+    zh: "查看当前使用的 DSH 版本并与最新版比对；可锁定版本避免自动升级带来行为变化（锁定 / 解锁在下次启动 / 重启 DSH 时生效）。",
+    en: "See the DSH version in use and compare with the latest; lock a version to avoid surprises from auto-upgrades (takes effect on next start / restart).",
+  },
+  "settings.version.current": { zh: "当前使用", en: "In use" },
+  "settings.version.latest": { zh: "最新版本", en: "Latest" },
+  "settings.version.lockState": { zh: "锁定状态", en: "Lock state" },
+  "settings.version.lock": { zh: "锁定当前版本", en: "Lock current version" },
+  "settings.version.unlock": { zh: "解锁（跟随最新）", en: "Unlock (follow latest)" },
+  "settings.version.refresh": { zh: "重新检查", en: "Re-check" },
+  "settings.version.checking": { zh: "检查中…", en: "Checking…" },
+  "settings.version.failed": { zh: "检查失败（网络或 npx 不可用）", en: "Check failed (network or npx unavailable)" },
+  "settings.version.lockedFmt": { zh: "已锁定 v{v}", en: "Locked at v{v}" },
+  "settings.version.unlocked": { zh: "未锁定（跟随最新）", en: "Not locked (follows latest)" },
+  "settings.version.upToDate": { zh: "已是最新", en: "Up to date" },
+  "settings.version.outdated": { zh: "有新版本可用", en: "Newer version available" },
+  "settings.version.lockSaved": { zh: "✓ 已锁定，重启 DSH 生效", en: "Locked — restart DSH to apply" },
+  "settings.version.unlockSaved": { zh: "✓ 已解锁，重启 DSH 生效", en: "Unlocked — restart DSH to apply" },
+  "settings.version.errSave": { zh: "⚠️ 保存失败：", en: "Save failed: " },
   "settings.appearance.title": { zh: "外观", en: "Appearance" },
   "settings.appearance.desc": {
     zh: "切换界面浅色 / 深色主题。对话标签内的网页内容由 DSH 自身控制，不随此切换。",

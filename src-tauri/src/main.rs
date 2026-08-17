@@ -97,6 +97,10 @@ struct Settings {
     /// 关闭 app 时是否同时关闭 3080 上的 DSH（默认 true；自己在终端管理 DSH 的用户可关闭）
     #[serde(default = "default_close_with_app")]
     close_with_app: bool,
+    /// DSH 版本锁定：Some("x.y.z") = 固定使用 @deepseek-ai/dsh@x.y.z；
+    /// None = 跟随最新（npx 默认行为）。改动后在下次启动/重启时生效。
+    #[serde(default)]
+    dsh_version_locked: Option<String>,
 }
 
 /// 缺失字段的默认值；close_with_app 缺省为 true（随 app 关闭）
@@ -109,6 +113,7 @@ impl Default for Settings {
         Settings {
             registry: String::new(),
             close_with_app: true,
+            dsh_version_locked: None,
         }
     }
 }
@@ -161,6 +166,146 @@ fn set_close_with_app(app: AppHandle, enabled: bool) -> Result<Settings, String>
     s.close_with_app = enabled;
     save_settings(&app, &s)?;
     Ok(s)
+}
+
+// ============================ DSH 版本管理（版本检查 / 锁定） ============================
+// 背景：默认 `npx --yes @deepseek-ai/dsh web` 每次解析 registry 最新版，无法固定 DSH 版本。
+// 版本锁定 = 在 config.json 记录 dshVersionLocked，spawn 时改跑 `@deepseek-ai/dsh@<ver>`。
+// 解锁 = 清空该字段，恢复「跟随最新」。改动在下次启动 / 重启 DSH 时生效。
+
+/// 解析与 npx 同目录的 npm 可执行文件（版本查询 `npm view` 用；策略同 resolve_npx）
+fn resolve_npm(app: &AppHandle) -> String {
+    let npx = resolve_npx(app);
+    if npx != "npx" {
+        let p = Path::new(&npx);
+        if let Some(dir) = p.parent() {
+            let npm = dir.join("npm");
+            if npm.exists() {
+                return npm.display().to_string();
+            }
+        }
+    }
+    for d in node_search_dirs() {
+        let p = d.join("npm");
+        if p.exists() {
+            return p.display().to_string();
+        }
+    }
+    "npm".to_string()
+}
+
+/// 运行子进程并返回 stdout（限制最大耗时；超时 / 启动失败 / 非零退出返回 None）
+async fn run_capture_timeout(cmd: &mut tokio::process::Command, secs: u64) -> Option<String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = cmd.spawn().ok()?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(secs), child.wait_with_output())
+        .await
+        .ok()?;
+    let out = out.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if stdout.is_empty() {
+        None
+    } else {
+        Some(stdout)
+    }
+}
+
+/// 从任意输出串中提取形如 x.y.z 的版本号（兼容 "dsh 0.1.2" / "v0.1.2" / "0.1.2-beta.1" 等）
+fn extract_version(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            let mut j = i;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+                j += 1;
+            }
+            let parts: Vec<&str> = text[start..j].split('.').collect();
+            if parts.len() >= 3 && !parts[..3].iter().any(|s| s.is_empty()) {
+                return Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]));
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// 查询 registry 上 @deepseek-ai/dsh 的最新版本（走用户配置的 npm 镜像）
+async fn dsh_latest_version(app: &AppHandle) -> Option<String> {
+    let mut cmd = tokio::process::Command::new(resolve_npm(app));
+    cmd.args(["view", "@deepseek-ai/dsh", "version"]);
+    apply_registry_env(&mut cmd, app);
+    apply_node_env(&mut cmd, app);
+    let out = run_capture_timeout(&mut cmd, 20).await?;
+    let trimmed = out.trim().trim_matches('"').trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+/// 当前实际使用（下次启动将使用）的 DSH 版本：
+/// 已锁定 → 查询锁定版本本身；未锁定 → 查询 npx 解析的最新版。
+async fn dsh_current_version(app: &AppHandle) -> Option<String> {
+    let s = load_settings(app);
+    let pkg = match &s.dsh_version_locked {
+        Some(v) if !v.trim().is_empty() => format!("@deepseek-ai/dsh@{}", v.trim()),
+        _ => "@deepseek-ai/dsh".to_string(),
+    };
+    let mut cmd = tokio::process::Command::new(resolve_npx(app));
+    cmd.arg("--yes").arg(&pkg).arg("--version");
+    apply_registry_env(&mut cmd, app);
+    apply_node_env(&mut cmd, app);
+    let out = run_capture_timeout(&mut cmd, 90).await?;
+    extract_version(&out)
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DshVersionInfo {
+    /// 当前实际使用（将使用）的版本；不可用时为 null
+    current: Option<String>,
+    /// registry 上最新版本；不可用时为 null
+    latest: Option<String>,
+    /// 锁定版本（未锁定为 null）
+    locked: Option<String>,
+}
+
+/// 版本信息：当前使用 / 最新 / 锁定（设置页「DSH 运行时版本」卡片）
+#[tauri::command]
+async fn dsh_version_info(app: AppHandle) -> DshVersionInfo {
+    let s = load_settings(&app);
+    let locked = s.dsh_version_locked.filter(|v| !v.trim().is_empty());
+    let (current, latest) = tokio::join!(dsh_current_version(&app), dsh_latest_version(&app));
+    DshVersionInfo {
+        current,
+        latest,
+        locked,
+    }
+}
+
+/// 锁定 / 解锁 DSH 版本：Some("x.y.z") 锁定；None 解锁（跟随最新）。
+/// 改动后需重启 DSH 生效（spawn 参数变化）。
+#[tauri::command]
+fn set_dsh_version_lock(app: AppHandle, version: Option<String>) -> Result<Settings, String> {
+    let mut s = load_settings(&app);
+    s.dsh_version_locked = version
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    save_settings(&app, &s)?;
+    Ok(s)
+}
+
+/// 构造要运行的 DSH npm 包参数：已锁定 → `@deepseek-ai/dsh@<ver>`，否则跟随最新
+fn dsh_pkg_arg(app: &AppHandle) -> String {
+    let s = load_settings(app);
+    match &s.dsh_version_locked {
+        Some(v) if !v.trim().is_empty() => format!("@deepseek-ai/dsh@{}", v.trim()),
+        _ => "@deepseek-ai/dsh".to_string(),
+    }
 }
 
 /// 当前 DSH web 的主题 / 语言偏好快照（供壳 UI 与其双向同步）
@@ -1040,7 +1185,14 @@ fn ensure_pnpm_root_add_compat() -> bool {
 /// 执行任意 dsh CLI 命令（stdout/stderr 实时推送到日志视图），内部实现
 async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String> {
     let mut cmd = Command::new(resolve_npx(app));
-    cmd.arg("--yes").arg("@deepseek-ai/dsh").args(args);
+    let pkg = dsh_pkg_arg(app);
+    cmd.arg("--yes").arg(&pkg).args(args);
+    if pkg != "@deepseek-ai/dsh" {
+        let _ = app.emit(
+            "dsh-log",
+            format!("🔒 DSH 版本已锁定：{}（脚本执行将使用该版本）", pkg),
+        );
+    }
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
     // 插件管理命令需要 pnpm workspace-root 兼容：优先写 profile .npmrc；
@@ -1099,7 +1251,14 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("❌ 无法复制日志句柄: {}", e))?;
 
     let mut cmd = Command::new(resolve_npx(app));
-    cmd.args(["--yes", "@deepseek-ai/dsh", "web"]);
+    let pkg = dsh_pkg_arg(app);
+    cmd.arg("--yes").arg(&pkg).arg("web");
+    if pkg != "@deepseek-ai/dsh" {
+        let _ = app.emit(
+            "dsh-log",
+            format!("🔒 DSH 版本已锁定：{}（解锁可在「设置 → DSH 运行时版本」操作）", pkg),
+        );
+    }
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
     cmd.stdout(Stdio::from(log_file)).stderr(Stdio::from(log_file2));
@@ -1812,6 +1971,33 @@ async fn webview_close(state: tauri::State<'_, WebviewRegistry>, id: String) -> 
     Ok(())
 }
 
+/// 跟随重定向，返回最终真实地址。
+/// 用途：广告/跳转追踪链接（doubleclick、google url 网关等）在 WKWebView 里可能因
+/// 跟踪防护停留不跳转，先解析出真实目标地址再打开。超时 3s，失败返回原 URL（不阻塞打开）。
+#[tauri::command]
+async fn resolve_final_url(url: String) -> String {
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(std::time::Duration::from_secs(3))
+        .user_agent(concat!("openharness/", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return url.clone(),
+    };
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            let final_url = resp.url().to_string();
+            if final_url.is_empty() {
+                url
+            } else {
+                final_url
+            }
+        }
+        Err(_) => url,
+    }
+}
+
 // ============================ Tauri 命令 ============================
 
 /// 启动 DSH：若 3080 已在运行则直接连接；否则先预装插件，再 spawn dsh web
@@ -2007,6 +2193,8 @@ fn main() {
             get_settings,
             set_registry,
             set_close_with_app,
+            dsh_version_info,
+            set_dsh_version_lock,
             dsh_settings_snapshot,
             dsh_settings_set,
             dsh_settings_subscribe,
@@ -2020,7 +2208,8 @@ fn main() {
             webview_back,
             webview_forward,
             webview_reload,
-            webview_close
+            webview_close,
+            resolve_final_url
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

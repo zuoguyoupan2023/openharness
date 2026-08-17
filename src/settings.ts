@@ -1,5 +1,5 @@
-// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言）
-import { restartDsh } from "./dsh";
+// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 版本）
+import { restartDsh, getDshVersionInfo, setDshVersionLock } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
@@ -178,4 +178,125 @@ export function initSettings(): void {
 
   // 语言变化后重新同步语言单选（设置页本身不重渲染，保持选中态）
   window.addEventListener("lang-changed", syncLangRadios);
+
+  // ===== DSH 运行时版本（版本检查 / 锁定 / 解锁） =====
+  const versionCurrent = document.getElementById("version-current") as HTMLSpanElement | null;
+  const versionLatest = document.getElementById("version-latest") as HTMLSpanElement | null;
+  const versionLocked = document.getElementById("version-locked") as HTMLSpanElement | null;
+  const versionLockBtn = document.getElementById("version-lock") as HTMLButtonElement | null;
+  const versionUnlockBtn = document.getElementById("version-unlock") as HTMLButtonElement | null;
+  const versionRefreshBtn = document.getElementById("version-refresh") as HTMLButtonElement | null;
+  const versionSaved = document.getElementById("version-saved") as HTMLSpanElement | null;
+
+  // 简单版本比较："0.24.2" → [0,24,2]；a > b 返回 1 / 相等 0 / 小于 -1
+  const cmpVersion = (a: string, b: string): number => {
+    const pa = a.split(".").map((s) => parseInt(s, 10) || 0);
+    const pb = b.split(".").map((s) => parseInt(s, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d > 0 ? 1 : -1;
+    }
+    return 0;
+  };
+
+  const verSet = (
+    el: HTMLElement | null,
+    val: string,
+    cls: "muted" | "good" | "warn" | "" = ""
+  ): void => {
+    if (el) {
+      el.textContent = val;
+      el.className = "vval" + (cls ? " " + cls : "");
+    }
+  };
+  const verMsg = (m: string): void => {
+    if (versionSaved) {
+      versionSaved.textContent = m;
+      setTimeout(() => {
+        versionSaved.textContent = "";
+      }, 6000);
+    }
+  };
+
+  async function loadVersionInfo(): Promise<void> {
+    verSet(versionCurrent, t("settings.version.checking"), "muted");
+    verSet(versionLatest, "…", "muted");
+    verSet(versionLocked, t("settings.version.checking"), "muted");
+    if (versionLockBtn) versionLockBtn.disabled = true;
+    if (versionUnlockBtn) versionUnlockBtn.disabled = true;
+    let current: string | null = null;
+    let locked: string | null = null;
+    try {
+      const info = await getDshVersionInfo();
+      current = info.current;
+      locked = info.locked;
+      verSet(
+        versionCurrent,
+        current ? "v" + current : t("settings.version.failed"),
+        current ? "" : "muted"
+      );
+      if (info.latest) {
+        const upToDate = current === info.latest || (current !== null && cmpVersion(current, info.latest) >= 0);
+        verSet(
+          versionLatest,
+          "v" + info.latest + (upToDate ? "（" + t("settings.version.upToDate") + "）" : "（" + t("settings.version.outdated") + "）"),
+          upToDate ? "good" : "warn"
+        );
+      } else {
+        verSet(versionLatest, t("settings.version.failed"), "muted");
+      }
+      verSet(
+        versionLocked,
+        locked ? t("settings.version.lockedFmt", { v: locked }) : t("settings.version.unlocked"),
+        locked ? "good" : "muted"
+      );
+    } catch {
+      verSet(versionCurrent, t("settings.version.failed"), "muted");
+      verSet(versionLatest, "—", "muted");
+      verSet(versionLocked, "—", "muted");
+    }
+    // 按钮可用性：可锁定 = 当前版本可查且未锁该版本；可解锁 = 已锁定
+    if (versionLockBtn) versionLockBtn.disabled = !current || current === locked;
+    if (versionUnlockBtn) versionUnlockBtn.disabled = !locked;
+  }
+
+  if (versionLockBtn) {
+    versionLockBtn.addEventListener("click", async () => {
+      let cur: string | null = null;
+      try {
+        const info = await getDshVersionInfo();
+        cur = info.current;
+      } catch (e) {
+        verMsg(t("settings.version.errSave") + String(e));
+        return;
+      }
+      if (!cur) {
+        verMsg(t("settings.version.failed"));
+        return;
+      }
+      try {
+        await setDshVersionLock(cur);
+        verMsg(t("settings.version.lockSaved"));
+      } catch (e) {
+        verMsg(t("settings.version.errSave") + String(e));
+      }
+      void loadVersionInfo();
+    });
+  }
+  if (versionUnlockBtn) {
+    versionUnlockBtn.addEventListener("click", async () => {
+      try {
+        await setDshVersionLock(null);
+        verMsg(t("settings.version.unlockSaved"));
+      } catch (e) {
+        verMsg(t("settings.version.errSave") + String(e));
+      }
+      void loadVersionInfo();
+    });
+  }
+  if (versionRefreshBtn) {
+    versionRefreshBtn.addEventListener("click", () => void loadVersionInfo());
+  }
+  // 初始化时异步加载版本信息（设置页打开即显示）
+  void loadVersionInfo();
 }

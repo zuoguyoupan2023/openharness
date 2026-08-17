@@ -119,7 +119,7 @@ function initTerminalPanel(): void {
     },
     // 点击终端输出中的 URL → 按用户设置的链接打开方式处理
     onWebLink(uri) {
-      openLink(uri);
+      void openLink(uri);
     },
   });
 
@@ -258,7 +258,7 @@ function initReferral(): void {
   const btn = document.getElementById("referral-toggle");
   btn?.addEventListener("click", () => {
     // 统一走链接打开方式；侧边栏可能在网页内容视图下点击，直接执行避免弹框被遮挡
-    openLink(REFERRAL_URL, { source: "webview" });
+    void openLink(REFERRAL_URL, { source: "webview" });
   });
 }
 
@@ -394,7 +394,7 @@ async function boot(): Promise<void> {
       if (isBlank || isForeign) {
         ev.preventDefault();
         ev.stopPropagation();
-        openLink(abs);
+        void openLink(abs);
       }
     },
     true
@@ -403,7 +403,7 @@ async function boot(): Promise<void> {
   // 拦截 JS 中的 window.open → 统一打开方式
   window.open = ((_url?: string | URL, _target?: string, _features?: string) => {
     const u = typeof _url === "string" ? _url : _url instanceof URL ? _url.href : "";
-    if (u) openLink(u);
+    if (u) void openLink(u);
     return null;
   }) as typeof window.open;
 

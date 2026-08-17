@@ -2,12 +2,33 @@
 // 所有「打开网址」的入口（网页标签新窗口、插件详情链接、终端 URL、全局链接点击）都汇聚到这里：
 // 按用户设置（每次询问 / App 内打开 / 系统浏览器）决定打开方式；
 // 「每次询问」时弹出统一风格的选择框，可勾选「不再提示」把该选择固化为默认。
+import { invoke } from "@tauri-apps/api/core";
 import { recordHistory } from "./history";
 
 export type LinkOpenMode = "ask" | "internal" | "external";
 
 const MODE_KEY = "dsh-link-open-mode";
 const DEFAULT_MODE: LinkOpenMode = "internal";
+
+/** 广告/跳转追踪域名：打开前先跟随重定向拿到真实目标地址（WKWebView 里这类链接常常停留不跳转） */
+const TRACKING_HOST_RE =
+  /(^|\.)doubleclick\.net$|fls\.doubleclick|googleadservices|googlesyndication|(^|\.)google\.(com|cn)\/url|(^|\.)outbrain\.|(^|\.)taboola\.|(^|\.)amazon-adsystem\.|linkedin\.com\/li\/track|(^|\.)fb\.me|(^|\.)bit\.ly$/i;
+
+/** 判断是否为广告/跳转追踪链接，需要先解析最终地址 */
+function isTrackingUrl(url: string): boolean {
+  return TRACKING_HOST_RE.test(url);
+}
+
+/** 让 Rust 跟随重定向解析最终地址；失败或耗时超限时退回原 URL（不阻塞打开） */
+async function resolveFinalUrl(url: string): Promise<string> {
+  try {
+    const finalUrl = await invoke<string>("resolve_final_url", { url });
+    if (finalUrl && /^https?:\/\//i.test(finalUrl)) return finalUrl;
+  } catch {
+    /* 忽略，使用原 URL */
+  }
+  return url;
+}
 
 export function getLinkMode(): LinkOpenMode {
   try {
@@ -101,18 +122,27 @@ export function showLinkDialog(url: string): void {
 /**
  * 统一打开链接入口：
  * - 非 http(s)（mailto: / tel: 等）直接交给系统默认打开器；
+ * - 广告/跳转追踪链接先跟随重定向解析真实目标地址，再按下面方式打开；
  * - internal / external 按记住的偏好直接执行；
  * - ask 时：来自「原生网页内容」（对话/网页标签）的链接直接以 App 内方式打开
  *   ——因为链接选择框是壳页面的 HTML，会被叠加在上面的原生 webview 遮挡、无法显示；
  *   来自应用界面（插件页/日志等，webview 已隐藏）的链接则弹出选择框。
  */
-export function openLink(url: string, opts?: { source?: "shell" | "webview" ; forceAsk?: boolean }): void {
-  const u = (url || "").trim();
+export async function openLink(
+  url: string,
+  opts?: { source?: "shell" | "webview"; forceAsk?: boolean }
+): Promise<void> {
+  let u = (url || "").trim();
   if (!u) return;
   if (!isHttpUrl(u)) {
     // 非网页协议：交给系统默认处理
     opener?.openExternal(u);
     return;
+  }
+  // 广告/跳转追踪链接：先解析最终地址（WKWebView 里这类链接常停留不跳转）
+  if (isTrackingUrl(u)) {
+    u = await resolveFinalUrl(u);
+    if (!u) return;
   }
   const source = opts?.source ?? "shell";
   let mode = opts?.forceAsk ? "ask" : getLinkMode();

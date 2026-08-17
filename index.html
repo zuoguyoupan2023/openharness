@@ -1458,6 +1458,30 @@
     }
     .setting-row button:hover, .setting-group > button:hover { background: var(--accent); }
     .setting-saved { font-size: 0.82rem; color: var(--ok-text); }
+    .setting-row button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* ===== DSH 运行时版本卡片 ===== */
+    .version-info {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .version-line { display: flex; align-items: baseline; gap: 10px; }
+    .version-line .vkey {
+      color: var(--text-faint);
+      min-width: 84px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .version-line .vval { color: var(--text-bright); word-break: break-all; }
+    .version-line .vval.muted { color: var(--text-dim); }
+    .version-line .vval.good { color: var(--ok-text); }
+    .version-line .vval.warn { color: var(--warn-text, #e2b93d); }
 
     /* ===== Node.js 环境准备向导（覆盖层） ===== */
     #node-wizard {
@@ -1826,6 +1850,45 @@
             <span data-i18n="settings.dsh.restart">重启 DSH</span>
           </button>
           <span id="settings-lc-saved" class="setting-saved"></span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="package"></i>
+          <span data-i18n="settings.version.title">DSH 运行时版本</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.version.desc">
+          查看当前使用的 DSH 版本并与最新版比对；可锁定版本避免自动升级带来行为变化（锁定 / 解锁在下次启动 / 重启 DSH 时生效）。
+        </div>
+        <div class="version-info">
+          <div class="version-line">
+            <span class="vkey" data-i18n="settings.version.current">当前使用</span>
+            <span id="version-current" class="vval muted">…</span>
+          </div>
+          <div class="version-line">
+            <span class="vkey" data-i18n="settings.version.latest">最新版本</span>
+            <span id="version-latest" class="vval muted">…</span>
+          </div>
+          <div class="version-line">
+            <span class="vkey" data-i18n="settings.version.lockState">锁定状态</span>
+            <span id="version-locked" class="vval muted">…</span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <button id="version-lock" class="btn-icon" disabled>
+            <i data-icon="package"></i>
+            <span data-i18n="settings.version.lock">锁定当前版本</span>
+          </button>
+          <button id="version-unlock" class="btn-icon" disabled>
+            <i data-icon="refresh-cw"></i>
+            <span data-i18n="settings.version.unlock">解锁（跟随最新）</span>
+          </button>
+          <button id="version-refresh" class="btn-icon">
+            <i data-icon="search"></i>
+            <span data-i18n="settings.version.refresh">重新检查</span>
+          </button>
+          <span id="version-saved" class="setting-saved"></span>
         </div>
       </div>
 

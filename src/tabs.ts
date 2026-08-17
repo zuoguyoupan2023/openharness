@@ -357,7 +357,7 @@ export class TabManager {
     await listen<WebviewEvent>("webview-new-window", (e) => {
       // window.open / target=_blank → 按用户的链接打开方式处理；
       // 来自原生网页内容：直接执行（内部打开或按设置走浏览器），不弹框（弹框会被本 webview 遮挡）
-      if (e.payload.url) openLink(e.payload.url, { source: "webview" });
+      if (e.payload.url) void openLink(e.payload.url, { source: "webview" });
     });
     await listen<WebviewTitleEvent>("webview-title", (e) => this.onTitle(e.payload));
   }

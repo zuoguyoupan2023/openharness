@@ -10,13 +10,15 @@ export interface Settings {
   registry: string;
   /** 关闭 app 时是否同时关闭 3080 上的 DSH（默认 true） */
   closeWithApp: boolean;
+  /** DSH 版本锁定：x.y.z = 固定该版本；null = 跟随最新（默认） */
+  dshVersionLocked: string | null;
 }
 
 export async function getSettings(): Promise<Settings> {
   try {
     return await invoke<Settings>("get_settings");
   } catch {
-    return { registry: NPM_OFFICIAL, closeWithApp: true };
+    return { registry: NPM_OFFICIAL, closeWithApp: true, dshVersionLocked: null };
   }
 }
 
