@@ -2169,10 +2169,15 @@ fn build_login_shell_command() -> (portable_pty::CommandBuilder, Option<PathBuf>
             .unwrap_or(false)
         {
             cmd.arg("-i");
-            if let Some(dir) = setup_zsh_integration() {
-                cmd.env("ZDOTDIR", &dir);
-                cmd.env("TERM", "xterm-256color");
-                zdotdir = Some(dir);
+            // setup_zsh_integration 仅 unix 存在（#[cfg(unix)]），
+            // 该 else 分支在 Windows 上同样会被编译（cfg! 是运行时判断），必须显式门控。
+            #[cfg(unix)]
+            {
+                if let Some(dir) = setup_zsh_integration() {
+                    cmd.env("ZDOTDIR", &dir);
+                    cmd.env("TERM", "xterm-256color");
+                    zdotdir = Some(dir);
+                }
             }
         }
     }
@@ -2307,9 +2312,14 @@ async fn agent_spawn(
 
     let mut cmd = CommandBuilder::new(&path);
     // Windows 智能体是 .cmd shim，需经 cmd.exe 执行
+    // 注意：portable_pty 的 CommandBuilder::arg 是 `&mut self -> ()`，不能链式调用，
+    // 必须先 new 再分步 arg（链式会给 () 调 .arg 而编译失败）。
     #[cfg(windows)]
     {
-        cmd = CommandBuilder::new("cmd.exe").arg("/C").arg(&path);
+        let mut win_cmd = CommandBuilder::new("cmd.exe");
+        win_cmd.arg("/C");
+        win_cmd.arg(&path);
+        cmd = win_cmd;
     }
     // 注入合并后的 PATH（内置 Node / nvm / volta / brew / 原 PATH）+ TERM，补 GUI 空环境
     let merged_path = node_path_env(&app);
