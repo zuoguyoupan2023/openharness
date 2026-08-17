@@ -28,9 +28,12 @@ const STORAGE_KEY = "openharness-tabs-v1";
 
 const HOME_LINKS: Array<{ i18nKey: string; url: string }> = [
   { i18nKey: "link.dsh", url: DSH_URL },
+  { i18nKey: "link.deepseek", url: "https://deepseek.com" },
+  { i18nKey: "link.chat", url: "https://chat.deepseek.com" },
   { i18nKey: "link.npm", url: "https://www.npmjs.com" },
   { i18nKey: "link.github", url: "https://github.com" },
   { i18nKey: "link.repo", url: "https://github.com/deepseek-ai/DeepSeek-Harness" },
+  { i18nKey: "link.openharness", url: "https://github.com/zuoguyoupan2023/openharness" },
   { i18nKey: "link.awesome", url: "https://awesome-dsh-plugin.com" },
   { i18nKey: "link.docs", url: "https://github.com/deepseek-ai/DeepSeek-Harness/blob/master/docs/user/develop/basic/index.zh.md" },
 ];
