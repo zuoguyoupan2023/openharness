@@ -375,8 +375,28 @@ fn dsh_pkg_arg(app: &AppHandle) -> String {
     dsh_effective_pkg(&s)
 }
 
+/// 跳转 / 登录网关域名黑名单：这类链接是「登录中间页 / 跳转网关」，页面会随时间、登录态、
+/// 环境而变化，不适合作为默认标签长期固定（用户容易从地址栏复制出这类链接误存）。
+/// 命中黑名单的 URL 不允许加入默认标签。
+const GATEWAY_HOSTS: &[&str] = &[
+    "open.weixin.qq.com", // 微信扫码登录
+    "login.microsoftonline.com",
+    "accounts.google.com",
+    "signin.aliyun.com",
+];
+
+/// 判断 URL 的 host 是否命中网关黑名单（精确匹配或子域匹配）
+fn is_gateway_url(url: &reqwest::Url) -> bool {
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    GATEWAY_HOSTS.iter().any(|g| {
+        let g = g.to_ascii_lowercase();
+        host == g || host.ends_with(&format!(".{}", g))
+    })
+}
+
 /// 设置「启动时额外默认打开的标签页」。
-/// 3080 是固定主标签，永远是启动第一标签，不允许出现在该列表里（自动过滤）。
+/// 3080 是固定主标签，永远是启动第一标签，不允许出现在该列表里（自动过滤）；
+/// 跳转网关链接（如微信扫码登录页）同样拒绝，避免把登录中间页固化成默认标签。
 #[tauri::command]
 fn set_default_tabs(app: AppHandle, tabs: Vec<String>) -> Result<Settings, String> {
     let mut cleaned: Vec<String> = Vec::new();
@@ -394,6 +414,10 @@ fn set_default_tabs(app: AppHandle, tabs: Vec<String>) -> Result<Settings, Strin
         let n = norm.unwrap();
         if n == DSH_URL {
             continue; // 3080 固定主标签，不可作为默认标签
+        }
+        let parsed = reqwest::Url::parse(&n).ok();
+        if parsed.as_ref().is_some_and(is_gateway_url) {
+            continue; // 登录/跳转网关，拒绝
         }
         if seen.insert(n.clone()) {
             cleaned.push(n);
@@ -1934,13 +1958,26 @@ fn get_webview(
         .ok_or_else(|| "❌ webview 不存在".to_string())
 }
 
-/// 创建网页标签的原生子 webview（创建后隐藏，由 webview_show 定位显示；幂等）
+/// 子 webview 的 User-Agent：WKWebView 默认 UA 只有 AppleWebKit 前缀、缺 Safari 版本尾巴
+/// （"Version/x.y Safari/605.1.15"），部分站点（如 DeepSeek 网页版）会把此类 UA 判定为
+/// 内嵌 WebView（非真实浏览器），未登录访问时直接走更严格的风控登录流程（跳微信扫码 qrconnect）。
+/// 补上完整 Safari UA 与真实浏览器一致，减轻被误判。
+const WEBVIEW_USER_AGENT: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
+
+/// 创建网页标签的原生子 webview（创建后隐藏，由 webview_show 定位显示；幂等）。
+///
+/// 重要（首帧空白修复）：以空白页 `about:blank` 创建、**不加载真实网址**。
+/// WKWebView 在隐藏（hidden）状态下加载页面会挂起首帧渲染 —— 页面在隐藏期间完成加载后，
+/// show 时首帧不合成 → 首屏空白 / 显示错乱（deepseek.com 官网空白、登录页地址错乱，切走
+/// 再切回强制重合成才恢复）。因此真实网址统一由前端在「激活显示（可见状态）」后通过
+/// `webview_navigate` 发起加载，保证首帧正常渲染。
 #[tauri::command]
 async fn webview_create(
     app: AppHandle,
     state: tauri::State<'_, WebviewRegistry>,
     id: String,
-    url: String,
+    _url: String,
     x: f64,
     y: f64,
     w: f64,
@@ -1952,7 +1989,9 @@ async fn webview_create(
             return Ok(());
         }
     }
-    let parsed = parse_http_url(&url)?;
+    // 空白占位页：创建时绝不加载目标站点（隐藏状态下加载会挂起首帧渲染）
+    let parsed = reqwest::Url::parse("about:blank")
+        .map_err(|e| format!("❌ 占位 URL 解析失败: {}", e))?;
     let label = id.clone();
     let label_nav = label.clone();
     let label_new = label.clone();
@@ -1961,6 +2000,7 @@ async fn webview_create(
     let app_new = app.clone();
     let app_title = app.clone();
     let builder = tauri::WebviewBuilder::new(label.clone(), tauri::WebviewUrl::External(parsed))
+        .user_agent(WEBVIEW_USER_AGENT)
         .initialization_script(LINK_CLICK_FIX)
         .on_navigation(move |u| {
             // 导航开始（链接点击 / 重定向 / 前进后退）：同步网址栏与历史栈

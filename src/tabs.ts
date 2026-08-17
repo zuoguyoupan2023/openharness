@@ -85,6 +85,27 @@ function sameTabUrl(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
+/** 跳转 / 登录网关域名（与 Rust 侧 GATEWAY_HOSTS 保持一致）：
+ * 这类链接是「登录中间页 / 跳转网关」，一旦被网页版触发重定向就会把标签 URL 固化，
+ * 重启后直接加载网关页（如 chat.deepseek.com 未登录跳微信扫码 open.weixin.qq.com）。
+ * 命中网关的 URL：不写入标签历史/持久化，恢复会话时直接丢弃该标签。
+ */
+const GATEWAY_HOSTS = [
+  "open.weixin.qq.com",
+  "login.microsoftonline.com",
+  "accounts.google.com",
+  "signin.aliyun.com",
+];
+
+function isGatewayUrl(url: string): boolean {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    return GATEWAY_HOSTS.some((g) => host === g || host.endsWith("." + g));
+  } catch {
+    return false;
+  }
+}
+
 export class TabManager {
   private tabs: TabData[] = [];
   private activeId = "";
@@ -155,6 +176,8 @@ export class TabManager {
     if (this.webviews.has(tab.id)) return;
     const b = await this.tabArea();
     try {
+      // 创建为空 webview（Rust 侧加载 about:blank，不加载真实网址）：
+      // 隐藏状态下加载会挂起首帧渲染（首屏空白 bug），真实导航统一在 show 之后（可见状态）发起
       await invoke("webview_create", { id: tab.id, url, x: b.x, y: b.y, w: b.w, h: b.h });
       this.webviews.add(tab.id);
     } catch (e) {
@@ -162,6 +185,14 @@ export class TabManager {
     }
   }
 
+  /** 已导航过真实 URL 的 webview id 集合（防止激活时重复导航/重载） */
+  private navigated = new Set<string>();
+
+  /**
+   * 显示 webview 并在**可见状态**下加载其真实 URL（首帧正常渲染的关键）：
+   * 1. 创建（空白页）→ 2. show（此时边可见边仍为空白）→ 3. navigate 到 tab.url。
+   * 第 3 步只在首次显示时执行；切走再切回不重复导航。
+   */
   private async showWebview(tab: TabData): Promise<void> {
     await this.createWebview(tab, tab.url);
     if (!this.webviews.has(tab.id)) return;
@@ -170,6 +201,14 @@ export class TabManager {
       await invoke("webview_show", { id: tab.id, x: b.x, y: b.y, w: b.w, h: b.h });
     } catch (e) {
       console.error("webview_show 失败:", e);
+    }
+    if (!this.navigated.has(tab.id) && tab.url) {
+      try {
+        await invoke("webview_navigate", { id: tab.id, url: tab.url });
+        this.navigated.add(tab.id);
+      } catch (e) {
+        console.error("webview_navigate(首次显示) 失败:", e);
+      }
     }
   }
 
@@ -185,6 +224,7 @@ export class TabManager {
   private async destroyWebview(id: string): Promise<void> {
     if (!this.webviews.has(id)) return;
     this.webviews.delete(id);
+    this.navigated.delete(id);
     try {
       await invoke("webview_close", { id });
     } catch {
@@ -208,10 +248,12 @@ export class TabManager {
   /** 网页标签导航（不存在则创建；url 在入队时已捕获，避免快速连续输入串台） */
   private async navigateWebview(tab: TabData, url: string): Promise<void> {
     if (!this.webviews.has(tab.id)) {
-      await this.createWebview(tab, url);
+      // 未创建：走「创建(空白) → 显示 → 可见状态下加载 url」完整流程（loadUrl 已同步 tab.url=url）
+      await this.showWebview(tab);
     } else {
       try {
         await invoke("webview_navigate", { id: tab.id, url });
+        this.navigated.add(tab.id);
       } catch (e) {
         console.error("webview_navigate 失败:", e);
       }
@@ -465,7 +507,8 @@ export class TabManager {
     }
     if (saved && Array.isArray(saved.tabs) && saved.tabs.length > 0) {
       this.tabs = saved.tabs
-        .filter((tab) => tab && typeof tab.id === "string")
+        // 丢弃被网关跳转污染的历史标签（URL 是登录中间页/跳转网关，如微信扫码链接）
+        .filter((tab) => tab && typeof tab.id === "string" && !(tab.url && isGatewayUrl(tab.url)))
         .map((tab) => ({
           id: tab.id,
           title: tab.title || t("tab.untitled"),
@@ -601,6 +644,12 @@ export class TabManager {
   private onNav({ id, url }: WebviewEvent): void {
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab || (tab.type !== "web" && tab.type !== "dsh") || !url || tab.url === url) return;
+    // 网关跳转链接（登录中间页）只同步网址栏显示，不写入标签 URL / 历史 / 持久化，
+    // 避免把微信扫码这类边缘地址固化：重启恢复的仍是用户原本的网址。
+    if (isGatewayUrl(url)) {
+      if (this.activeId === id) this.urlInput.value = url;
+      return;
+    }
     tab.url = url;
     tab.title = hostOf(url);
     recordHistory(url, tab.title);
@@ -612,10 +661,12 @@ export class TabManager {
     this.persist();
   }
 
-  /** 原生 webview 标题变化：更新标签标题与历史记录标题（web / dsh 均生效） */
+  /** 原生 webview 标题变化：更新标签标题与历史记录标题（web / dsh 均生效）。
+ * 网关跳转页（如微信扫码）的标题不覆盖标签标题，避免标签显示 open.weixin.qq.com。 */
   private onTitle({ id, title }: WebviewTitleEvent): void {
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab || (tab.type !== "web" && tab.type !== "dsh") || !title) return;
+    if (GATEWAY_HOSTS.some((g) => title.toLowerCase().includes(g))) return; // 网关页标题，忽略
     const clean = title.length > 40 ? title.slice(0, 40) + "…" : title;
     tab.title = clean;
     if (tab.url) recordHistory(tab.url, clean);
