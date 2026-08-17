@@ -102,9 +102,11 @@ export function showLinkDialog(url: string): void {
  * 统一打开链接入口：
  * - 非 http(s)（mailto: / tel: 等）直接交给系统默认打开器；
  * - internal / external 按记住的偏好直接执行；
- * - ask（默认）弹出选择框。
+ * - ask 时：来自「原生网页内容」（对话/网页标签）的链接直接以 App 内方式打开
+ *   ——因为链接选择框是壳页面的 HTML，会被叠加在上面的原生 webview 遮挡、无法显示；
+ *   来自应用界面（插件页/日志等，webview 已隐藏）的链接则弹出选择框。
  */
-export function openLink(url: string, opts?: { forceAsk?: boolean }): void {
+export function openLink(url: string, opts?: { source?: "shell" | "webview" ; forceAsk?: boolean }): void {
   const u = (url || "").trim();
   if (!u) return;
   if (!isHttpUrl(u)) {
@@ -112,7 +114,9 @@ export function openLink(url: string, opts?: { forceAsk?: boolean }): void {
     opener?.openExternal(u);
     return;
   }
-  const mode = opts?.forceAsk ? "ask" : getLinkMode();
+  const source = opts?.source ?? "shell";
+  let mode = opts?.forceAsk ? "ask" : getLinkMode();
+  if (mode === "ask" && source === "webview") mode = "internal"; // 网页内容内无法弹框：直接 App 内打开
   if (mode === "internal") {
     recordHistory(u);
     opener?.openInApp(u);

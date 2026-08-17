@@ -355,8 +355,9 @@ export class TabManager {
   async initEvents(): Promise<void> {
     await listen<WebviewEvent>("webview-nav", (e) => this.onNav(e.payload));
     await listen<WebviewEvent>("webview-new-window", (e) => {
-      // window.open / target=_blank → 按用户的链接打开方式处理（App 内新标签 or 系统浏览器 or 询问）
-      if (e.payload.url) openLink(e.payload.url);
+      // window.open / target=_blank → 按用户的链接打开方式处理；
+      // 来自原生网页内容：直接执行（内部打开或按设置走浏览器），不弹框（弹框会被本 webview 遮挡）
+      if (e.payload.url) openLink(e.payload.url, { source: "webview" });
     });
     await listen<WebviewTitleEvent>("webview-title", (e) => this.onTitle(e.payload));
   }

@@ -353,8 +353,8 @@ const DICT: Record<string, Entry> = {
   "settings.appearance.dark": { zh: "暗色", en: "Dark" },
   "settings.links.title": { zh: "链接打开方式", en: "Link opening behavior" },
   "settings.links.desc": {
-    zh: "点击网页链接时的默认打开方式。选择「每次询问」时，点击链接会弹出选择框，也可以勾选「不再提示」记住本次选择。",
-    en: "How links are opened by default. With “Ask every time”, a chooser appears on each link click; you can also tick “don’t ask again” to remember the choice.",
+    zh: "点击网页链接时的默认打开方式。应用界面（插件页/日志等）里的链接选择「每次询问」会弹出选择框；对话与网页标签内的链接直接按所选方式打开（立即跳转）。",
+    en: "How links are opened by default. In the app UI (plugins/logs) “Ask every time” shows a chooser; links inside chat and web tabs open immediately per the chosen mode.",
   },
   "settings.links.ask": { zh: "每次询问", en: "Ask every time" },
   "settings.links.internal": { zh: "始终在 App 内打开（新标签页）", en: "Always open in app (new tab)" },

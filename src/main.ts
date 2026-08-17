@@ -257,8 +257,8 @@ const REFERRAL_URL = "https://opencode.ai/go?ref=3Y4AMWZX88";
 function initReferral(): void {
   const btn = document.getElementById("referral-toggle");
   btn?.addEventListener("click", () => {
-    // 统一走链接打开方式（默认浏览器打开，用户可在设置中更改）
-    openLink(REFERRAL_URL);
+    // 统一走链接打开方式；侧边栏可能在网页内容视图下点击，直接执行避免弹框被遮挡
+    openLink(REFERRAL_URL, { source: "webview" });
   });
 }
 

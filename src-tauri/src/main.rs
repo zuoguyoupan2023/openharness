@@ -17,6 +17,42 @@ const DSH_URL: &str = "http://127.0.0.1:3080";
 // npm 镜像预设（官方默认 "" / 淘宝 npmmirror）由前端 src/config.ts 提供；
 // 此处只持久化用户选择的 registry，spawn 时注入 npm_config_registry 环境变量。
 
+/// 注入到所有原生 webview 的兜底脚本：
+/// WKWebView 对某些页面（如 SPA 动态渲染的 DSH webui）里 <a target="_blank">
+/// 的点击不会触发新窗口回调（createWebViewWith），表现为「点击无反应」。
+/// 这里统一把 target=_blank 的 http(s) 链接点击转成 window.open()：
+/// window.open 走 WKWebView 新窗口回调是稳定行为 → 触发 Rust 侧 on_new_window
+/// → webview-new-window 事件 → 前端 openLink（按设置的打开方式执行）。
+/// 普通链接（无 target）不处理，保持 webview 内导航。
+/// 附带探针：捕获点击时在 document.title 前缀 "[LINK]"，2.5s 后恢复，
+/// 便于验证脚本是否生效（对应 Rust 侧 webview-title 事件会同步标签标题）。
+const LINK_CLICK_FIX: &str = r#"(function(){
+  var probe = function (label, href, target) {
+    try {
+      var prev = document.title;
+      document.title = "[LINK] " + label + " " + href + " t=" + target;
+      setTimeout(function () {
+        if (document.title && document.title.indexOf("[LINK]") === 0) {
+          document.title = prev;
+        }
+      }, 2500);
+    } catch (e) {}
+  };
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var a = (t && t.closest) ? t.closest("a[href]") : null;
+    if (!a) return;
+    var href = a.href || "";
+    if (!/^https?:\/\//i.test(href)) return;
+    var target = (a.getAttribute("target") || "").toLowerCase();
+    if (target.indexOf("_blank") === 0) {
+      probe("blank", href, target);
+      e.preventDefault();
+      window.open(href, "_blank");
+    }
+  }, true);
+})();"#;
+
 /// 预装插件清单：发布到 npm 后，取消注释对应元素即可自动预装。
 /// 逻辑已完整实现（幂等：已安装则跳过；先于 web 启动，串行避免 npx/pnpm 并发锁）。
 /// 四件套：adhdgofly-dsh-ext（POS 高亮）+ openharness-reader（文件阅读/编辑/MD 预览）
@@ -1636,6 +1672,7 @@ async fn webview_create(
     let app_new = app.clone();
     let app_title = app.clone();
     let builder = tauri::WebviewBuilder::new(label.clone(), tauri::WebviewUrl::External(parsed))
+        .initialization_script(LINK_CLICK_FIX)
         .on_navigation(move |u| {
             // 导航开始（链接点击 / 重定向 / 前进后退）：同步网址栏与历史栈
             let _ = app_nav.emit(
