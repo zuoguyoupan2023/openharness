@@ -159,11 +159,18 @@ function statusCls(st: DownloadStatus): string {
   return "failed";
 }
 
+/** 并发防护：同一容器并发渲染时（async 中途 await 交错），只允许最新一次调用把结果落盘，
+ * 防止旧调用恢复后把已过期的页面再 append 上去（曾出现上下重复两份的 bug）。 */
+const renderGen = new WeakMap<HTMLElement, number>();
+
 /** 渲染下载记录整页（Chrome 风格：头部标题 + 清空、保存路径栏、状态列表） */
 export async function renderDownloadsPage(
   container: HTMLElement,
   h: DownloadsPageHandlers
 ): Promise<void> {
+  const gen = (renderGen.get(container) ?? 0) + 1;
+  renderGen.set(container, gen);
+  const stale = (): boolean => renderGen.get(container) !== gen;
   container.innerHTML = "";
   const page = document.createElement("div");
   page.className = "downloads-page";
@@ -196,6 +203,8 @@ export async function renderDownloadsPage(
   } catch {
     dirInfo = { configured: null, effective: "" };
   }
+  // await 期间可能已有更新的渲染调用接管本容器：本次结果作废，避免重复 append
+  if (stale()) return;
   pathVal.textContent = dirInfo.effective || "—";
   pathVal.title = dirInfo.effective;
   const changeBtn = document.createElement("button");

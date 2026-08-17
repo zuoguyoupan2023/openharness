@@ -595,7 +595,11 @@ export class TabManager {
     } else if (tab.type === "history") {
       this.renderHistoryPane(pane);
     } else if (tab.type === "downloads") {
-      void this.renderDownloadsPane(pane);
+      // 注意：下载记录页是异步渲染（renderDownloadsPage 含 await）。若在此渲染，
+      // 会与 activate() 的刷新调用并发：两次调用挂起在同一个 await 上，恢复后各自
+      // append 页面 → 上下重复两份。因此创建 pane 时不渲染，统一由 activate() 调用
+      // renderDownloadsPane 执行（它始终会对激活标签渲染一次）。
+      overlay.style.display = "flex";
     } else if (tab.type === "dsh") {
       // 已就绪的 DSH 标签：iframe 不加载（内容由原生 webview 承载），等待激活时创建/显示
       overlay.style.display = "none";
