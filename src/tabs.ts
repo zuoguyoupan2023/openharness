@@ -7,6 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { t } from "./i18n";
+import { openLink } from "./open-link";
+import { recordHistory } from "./history";
 
 export type TabType = "dsh" | "web" | "blank";
 
@@ -335,8 +337,8 @@ export class TabManager {
   async initEvents(): Promise<void> {
     await listen<WebviewEvent>("webview-nav", (e) => this.onNav(e.payload));
     await listen<WebviewEvent>("webview-new-window", (e) => {
-      // window.open / target=_blank → 自动开新标签
-      if (e.payload.url) this.addTab("web", e.payload.url);
+      // window.open / target=_blank → 按用户的链接打开方式处理（App 内新标签 or 系统浏览器 or 询问）
+      if (e.payload.url) openLink(e.payload.url);
     });
     await listen<WebviewTitleEvent>("webview-title", (e) => this.onTitle(e.payload));
   }
@@ -469,6 +471,7 @@ export class TabManager {
 
   private loadUrl(tab: TabData, url: string): void {
     tab.url = url;
+    recordHistory(url, tab.title === hostOf(url) ? undefined : tab.title);
     tab.title =
       tab.type === "dsh" ? "DeepSeek Harness" : tab.type === "blank" ? t("tab.untitled") : hostOf(url);
     const pane = this.ensurePane(tab);
@@ -501,6 +504,7 @@ export class TabManager {
     if (!tab || tab.type !== "web" || !url || tab.url === url) return;
     tab.url = url;
     tab.title = hostOf(url);
+    recordHistory(url, tab.title);
     tab.history = tab.history.slice(0, tab.historyIdx + 1);
     tab.history.push(url);
     tab.historyIdx = tab.history.length - 1;
@@ -509,11 +513,13 @@ export class TabManager {
     this.persist();
   }
 
-  /** 原生 webview 标题变化：更新标签标题 */
+  /** 原生 webview 标题变化：更新标签标题与历史记录标题 */
   private onTitle({ id, title }: WebviewTitleEvent): void {
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab || tab.type !== "web" || !title) return;
-    tab.title = title.length > 40 ? title.slice(0, 40) + "…" : title;
+    const clean = title.length > 40 ? title.slice(0, 40) + "…" : title;
+    tab.title = clean;
+    if (tab.url) recordHistory(tab.url, clean);
     this.renderTabBar();
   }
 

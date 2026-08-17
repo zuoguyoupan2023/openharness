@@ -3,6 +3,7 @@ import { restartDsh } from "./dsh";
 import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
+import { getLinkMode, setLinkMode, LinkOpenMode } from "./open-link";
 import { getIndexSourcePref, getIndexSourceCustom, setIndexSourcePref, getIndexSourceGitee, setIndexSourceGitee, getDefaultGiteeUrl, type IndexSource } from "./plugin-sources";
 
 export function initSettings(): void {
@@ -104,6 +105,31 @@ export function initSettings(): void {
   langRadios.forEach((r) => {
     r.addEventListener("change", () => {
       if (r.checked) setLang(r.value === "zh" ? "zh" : "en");
+    });
+  });
+
+  // ===== 链接打开方式：每次询问 / App 内打开 / 系统浏览器 =====
+  const linkRadios = document.getElementsByName("link-mode") as NodeListOf<HTMLInputElement>;
+  const linkSaved = document.getElementById("settings-links-saved") as HTMLSpanElement | null;
+  const syncLinkRadios = (): void => {
+    const m = getLinkMode();
+    linkRadios.forEach((r) => {
+      r.checked = r.value === m;
+    });
+  };
+  syncLinkRadios();
+  // 语言切换后若文案变化，保持选中态
+  window.addEventListener("lang-changed", syncLinkRadios);
+  linkRadios.forEach((r) => {
+    r.addEventListener("change", () => {
+      if (!r.checked) return;
+      setLinkMode(r.value as LinkOpenMode);
+      if (linkSaved) {
+        linkSaved.textContent = t("settings.links.saved");
+        setTimeout(() => {
+          linkSaved.textContent = "";
+        }, 3000);
+      }
     });
   });
 
