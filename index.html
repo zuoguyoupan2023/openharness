@@ -948,6 +948,34 @@
     .install-btn:disabled { opacity: 0.4; cursor: wait; }
     .plugin-loading { color: var(--text-faint); font-size: 0.83rem; }
 
+    /* ===== P0 交互（状态条 / busy 互斥 / 卸载确认 / 表格哨兵） ===== */
+    #plugin-action-status {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 12px; border-radius: 10px;
+      font-size: 0.8rem; border: 1px solid var(--border-strong);
+    }
+    #plugin-action-status.busy { background: var(--card-2); color: var(--text-dim); }
+    #plugin-action-status.ok { background: var(--ok-soft); color: var(--ok-text); }
+    #plugin-action-status.error { background: var(--warn-soft); color: var(--warn-text); }
+    #plugin-action-status.fade { opacity: 0; transition: opacity 0.6s; }
+    #plugin-action-status svg { width: 1em; height: 1em; }
+    #plugin-action-status .spin { display: inline-flex; animation: plugin-spin 1s linear infinite; }
+    @keyframes plugin-spin { to { transform: rotate(360deg); } }
+    #view-plugins.is-busy .install-btn,
+    #view-plugins.is-busy .chip-rm,
+    #view-plugins.is-busy .official-card button,
+    #view-plugins.is-busy #plugins-update-all,
+    #view-plugins.is-busy #plugins-install-local {
+      pointer-events: none; opacity: 0.5;
+    }
+    .install-btn.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .cancel-mini { margin-left: 2px; }
+    .chip-armed { background: var(--warn-soft); border-color: var(--danger); }
+    .plugin-table-more {
+      text-align: center; color: var(--text-faint);
+      font-size: 0.75rem; padding: 6px 0;
+    }
+
     /* ===== 来源 tabs / ★Stars / 来源徽标 / 提示条（006 双数据源 + 秒开） ===== */
     .source-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
     .src-tab {
@@ -1307,6 +1335,7 @@
 
     <!-- 插件中心 -->
     <section id="view-plugins" class="view">
+      <div id="plugin-action-status" class="plugin-action-status" aria-live="polite" hidden></div>
       <div class="section-title">
         <span class="ticon"><i data-icon="puzzle"></i></span>
         <span data-i18n="plugins.title">插件中心</span>
@@ -1316,6 +1345,7 @@
         <span class="ticon"><i data-icon="circle-check"></i></span>
         <span data-i18n="plugins.installedTitle">已安装（web profile）</span>
         <span class="badge" id="profile-path"></span>
+        <button id="plugins-update-all" class="btn-icon link-btn" hidden></button>
       </div>
       <div class="installed-chips" id="installed-chips"></div>
 
@@ -1372,6 +1402,7 @@
         </thead>
         <tbody id="plugin-tbody"></tbody>
       </table>
+      <div id="plugin-table-more" class="plugin-table-more" hidden></div>
     </section>
 
     <!-- 设置 -->

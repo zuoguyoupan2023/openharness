@@ -343,6 +343,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       const spec = (installed.deps || {})[n];
       const isDep = spec !== undefined;
       const label = chipVersionLabel(spec);
+      const pkg = pkgNameOf(n);
       const el = document.createElement("span");
       el.className = "chip";
       el.title = spec ? `${n}@${spec}` : n;
@@ -350,24 +351,27 @@ export function initPlugins(opts: PluginCenterOptions): void {
       txt.textContent = label ? `${n} @${label}` : n;
       el.appendChild(txt);
       if (isDep) {
-        // 更新：用已安装依赖的实拆 spec（npm 走 update pkg；github:/file: 走 add 同一 spec）
-        const upCmd = updateCommandFor(true, spec, n);
-        const up = document.createElement("button");
-        up.className = "chip-rm";
-        up.title = t("plugins.update") + " " + n;
-        up.innerHTML = iconSvg("refresh-cw");
-        up.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          performAction(`${t("plugins.update")} ${n}`, upCmd);
-        });
-        el.appendChild(up);
+        // 更新图标仅「npm 且可更新」时出现；github/本地 chips 不显示更新图标（语义不同，走重新安装，见表格/详情）
+        const updatable = isUpdatable(n, pkg, versions[pkg]);
+        if (updatable && !/^(github:|git\+)/.test(spec || "")) {
+          const upCmd = updateCommandFor(true, spec, pkg);
+          const up = document.createElement("button");
+          up.className = "chip-rm";
+          up.title = t("plugins.update") + " " + pkg;
+          up.innerHTML = iconSvg("refresh-cw");
+          up.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            enqueueAction([{ label: `${t("plugins.update")} ${pkg}`, cmd: upCmd }]);
+          });
+          el.appendChild(up);
+        }
         const rm = document.createElement("button");
         rm.className = "chip-rm";
         rm.title = t("plugins.remove") + " " + n;
         rm.innerHTML = iconSvg("x");
         rm.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          performAction(`${t("plugins.remove")} ${n}`, ["plugin", "--profile", "web", "remove", n]);
+          armChipRemove(el, n, `${t("plugins.remove")} ${n}`);
         });
         el.appendChild(rm);
       }
@@ -387,7 +391,9 @@ export function initPlugins(opts: PluginCenterOptions): void {
         filterCat = ""; // 切源时重置分类
         renderSourceTabs();
         renderCategories();
-        renderTable();
+        renderTable(true);
+        const v = document.getElementById("view-plugins");
+        if (v) v.scrollTop = 0;
       });
       els.sourceTabs.appendChild(b);
     };
@@ -407,7 +413,9 @@ export function initPlugins(opts: PluginCenterOptions): void {
       chip.addEventListener("click", () => {
         filterCat = filterCat === key ? "" : key;
         renderCategories();
-        renderTable();
+        renderTable(true);
+        const v = document.getElementById("view-plugins");
+        if (v) v.scrollTop = 0;
       });
       els.cats.appendChild(chip);
     };
@@ -433,7 +441,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
         btn.innerHTML = iconSvg("download");
         btn.appendChild(document.createTextNode(t("plugins.install")));
         btn.addEventListener("click", () =>
-          performAction(`${t("plugins.install")} ${p.name}`, ["plugin", "--profile", "web", "add", p.name])
+          enqueueAction([{ label: `${t("plugins.install")} ${p.name}`, cmd: ["plugin", "--profile", "web", "add", p.name] }])
         );
       }
       card.innerHTML = `<div class="official-name">${p.name}</div><div class="official-desc">${t(p.descKey)}</div>`;
@@ -464,29 +472,50 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
-  /** 详情页操作按钮（安装/更新/卸载） */
+  /** 详情页操作按钮（安装/更新/重新安装/卸载，P0-6 语义 + P0-3 确认） */
   function appendDetailActions(container: HTMLElement, p: PluginEntry): void {
     const spec = p.installSpec;
     const pkg = p.pkg_name ?? pkgNameOf(spec);
     const installedFlag = isInstalled(pkg) || isInstalled(p.name);
     container.innerHTML = "";
     if (installedFlag) {
-      // 更新：npm 走 update；github/本地走重装同一 spec（upCommand 由 updateCommandFor 统一决定）
       const instSpec = installedSpecOf(pkg, p.name); // 已安装的依赖 spec（含 github:/file: 值）
-      const upCmd = updateCommandFor(p.isNpm, instSpec, pkg);
-      const up = document.createElement("button");
-      up.className = "install-btn btn-icon";
-      up.innerHTML = iconSvg("upload") + t("plugins.update");
-      up.title = instSpec ? `${t("plugins.updateTo")} ${instSpec}` : t("plugins.update");
-      up.addEventListener("click", () =>
-        performAction(`${t("plugins.update")} ${pkg}`, upCmd)
-      );
-      container.appendChild(up);
+      const npm = p.isNpm;
+      const latest = versions[pkg];
+      if (!npm) {
+        // github / 本地：重新安装（无 npm 版本语义）
+        const upCmd = updateCommandFor(false, instSpec, pkg);
+        const up = document.createElement("button");
+        up.className = "install-btn btn-icon";
+        up.innerHTML = iconSvg("refresh-cw") + t("plugins.reinstall");
+        up.title = t("plugins.reinstall");
+        up.addEventListener("click", () =>
+          enqueueAction([{ label: `${t("plugins.reinstall")} ${pkg}`, cmd: upCmd }])
+        );
+        container.appendChild(up);
+      } else if (isUpdatable(p.name, pkg, latest)) {
+        const upCmd = updateCommandFor(true, instSpec, pkg);
+        const up = document.createElement("button");
+        up.className = "install-btn btn-icon";
+        up.innerHTML = iconSvg("upload") + t("plugins.update");
+        up.title = latest && latest !== "—" ? `${t("plugins.updateTo")} ${latest}` : t("plugins.update");
+        up.addEventListener("click", () =>
+          enqueueAction([{ label: `${t("plugins.update")} ${pkg}`, cmd: upCmd }])
+        );
+        container.appendChild(up);
+      } else {
+        const up = document.createElement("button");
+        up.className = "install-btn btn-icon";
+        up.disabled = true;
+        up.innerHTML = iconSvg("check") + t("plugins.alreadyLatest");
+        up.title = t("plugins.alreadyLatest");
+        container.appendChild(up);
+      }
       const rm = document.createElement("button");
       rm.className = "install-btn btn-icon";
       rm.innerHTML = iconSvg("trash-2") + t("plugins.remove");
       rm.addEventListener("click", () =>
-        performAction(`${t("plugins.remove")} ${p.name}`, ["plugin", "--profile", "web", "remove", p.name])
+        confirmRemoveInPlace(rm, `${t("plugins.remove")} ${p.name}`, ["plugin", "--profile", "web", "remove", p.name])
       );
       container.appendChild(rm);
     } else {
@@ -494,15 +523,16 @@ export function initPlugins(opts: PluginCenterOptions): void {
       inst.className = "install-btn btn-icon";
       inst.innerHTML = iconSvg("download") + t("plugins.install");
       inst.addEventListener("click", () =>
-        performAction(`${t("plugins.install")} ${spec}`, ["plugin", "--profile", "web", "add", spec])
+        enqueueAction([{ label: `${t("plugins.install")} ${spec}`, cmd: ["plugin", "--profile", "web", "add", spec] }])
       );
       container.appendChild(inst);
     }
   }
 
   /** 行内详情：npm 版本历史 / 依赖 / README / 作者 / 许可证 */
-  async function renderNpmDetail(body: HTMLElement, pkg: string): Promise<void> {
+  async function renderNpmDetail(body: HTMLElement, pkg: string, seq: number): Promise<void> {
     const meta = await fetchNpmMeta(pkg);
+    if (seq !== detailSeq) return; // 详情已关闭或已切换：丢弃过期结果（P0-5）
     if (!meta) {
       body.innerHTML = `<div class="detail-note">${escHtml(t("plugins.detail.fail"))}</div>`;
       return;
@@ -555,8 +585,10 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
     html += `</div></div>`;
 
+    if (seq !== detailSeq) return;
     body.innerHTML = html;
 
+    if (seq !== detailSeq) return;
     const readme = meta.readme?.trim();
     const sec = document.createElement("div");
     sec.className = "detail-section";
@@ -608,8 +640,11 @@ export function initPlugins(opts: PluginCenterOptions): void {
     return badges.join("");
   }
 
+  /** 详情竞态序号（P0-5）：打开/关闭详情都递增，使旧 npm 详情写入失效 */
+  let detailSeq = 0;
   /** 展开/收起行内详情（单页无路由：点击插件行切换） */
   function toggleDetail(tr: HTMLTableRowElement, p: PluginEntry): void {
+    detailSeq++; // 任何切换都使进行中的旧请求失效
     const existing = tr.nextElementSibling;
     if (existing && existing.classList.contains("plugin-detail-row")) {
       existing.remove();
@@ -693,7 +728,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     if (p.isNpm) {
       const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
       body.textContent = t("plugins.detail.loading");
-      void renderNpmDetail(body, pkg);
+      void renderNpmDetail(body, pkg, detailSeq);
     } else {
       const note = document.createElement("div");
       note.className = "detail-note";
@@ -702,18 +737,22 @@ export function initPlugins(opts: PluginCenterOptions): void {
     }
   }
 
-  function renderTable(): void {
+  function renderTable(reset = true): void {
+    if (reset) visibleRows = TABLE_PAGE;
     const rows = filtered();
+    currentRows = rows;
     els.count.textContent = String(rows.length);
     els.tbody.innerHTML = "";
     els.table.style.display = rows.length ? "table" : "none";
     if (!rows.length) {
       els.loading.textContent = t("plugins.noMatch");
       els.loading.style.display = "block";
+      renderMore(0);
       return;
     }
     els.loading.style.display = "none";
-    rows.forEach((p) => {
+    const slice = rows.slice(0, visibleRows);
+    slice.forEach((p, i) => {
       const spec = p.installSpec;
       const npm = p.isNpm;
       const pkg = p.pkg_name ?? pkgNameOf(spec);
@@ -731,21 +770,12 @@ export function initPlugins(opts: PluginCenterOptions): void {
       else if (npm && ver && ver !== "—") tagHtml = `<span class="tag latest">${t("plugins.latestTag")}</span>`;
       if (updatable) tagHtml = `<span class="tag update">${t("plugins.updateTag")}</span>`;
 
-      let actionsHtml = "";
-      if (installedFlag) {
-        const instSpec = installedSpecOf(pkg, p.name); // 已安装依赖 spec（github:/file: 值）
-        const upCmd = updateCommandFor(npm, instSpec, pkg);
-        actionsHtml =
-          `<button class="install-btn btn-icon" data-act="update" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(instSpec ? t("plugins.updateTo") + " " + instSpec : t("plugins.update"))}">${iconSvg("upload")}</button> ` +
-          `<button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
-      } else {
-        actionsHtml = `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(spec)}" title="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
-      }
-
       const desc = (p.description?.zh || p.description?.en || "").slice(0, 120);
       const tr = document.createElement("tr");
       tr.className = "plugin-row";
       tr.title = t("plugins.detail.hint");
+      tr.dataset.pkg = pkg;
+      tr.dataset.idx = String(i);
       tr.innerHTML = `
         <td class="pkg"><a href="${escHtml(p.url || "#")}" target="_blank" rel="noopener">${escHtml(p.name)}</a></td>
         <td class="desc">${escHtml(desc)}</td>
@@ -753,21 +783,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
         <td class="stars">${iconSvg("star")}<span>${escHtml(formatStars(p.stars))}</span></td>
         <td class="src">${sourceBadgesHtml(p)}</td>
         <td>${tagHtml}</td>
-        <td class="actions">${actionsHtml}</td>`;
-      tr.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) => {
-        b.addEventListener("click", () => {
-          const act = b.dataset.act;
-          if (act === "install") performAction(`${t("plugins.install")} ${b.dataset.spec}`, ["plugin", "--profile", "web", "add", b.dataset.spec!]);
-          else if (act === "update") {
-            // update 命令在渲染时已序列化进 data-cmd（npm=update pkg；github/local=add spec）
-            const cmd = (b.dataset.cmd || "").split("|");
-            const args = cmd.length >= 2 ? cmd : ["plugin", "--profile", "web", "update", b.dataset.spec!];
-            const label = `${t("plugins.update")} ${b.dataset.spec || cmd[cmd.length - 1] || ""}`;
-            performAction(label, args);
-          }
-          else if (act === "remove") performAction(`${t("plugins.remove")} ${b.dataset.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name!]);
-        });
-      });
+        <td class="actions">${tableActionsHtmlFor(p)}</td>`;
+      bindRowActions(tr, p);
       tr.addEventListener("click", (ev) => {
         const target = ev.target as HTMLElement;
         if (target.closest("a, button, [data-act]")) return;
@@ -775,6 +792,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       });
       els.tbody.appendChild(tr);
     });
+    renderMore(rows.length);
   }
 
   /** 顶部快照/diff 提示条 */
@@ -806,20 +824,339 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.banner.appendChild(close);
   }
 
-  async function performAction(label: string, args: string[]): Promise<void> {
-    opts.onAction(`⏳ ${label} …`);
-    try {
-      await runDshCmd(args);
-      opts.onAction(`✅ ${t("plugins.actDone", { label })}`);
-      await restartDsh();
-      opts.onAction(t("plugins.actRestarted"));
-    } catch (e) {
-      opts.onAction(`❌ ${t("plugins.actFail", { label })}${e}`);
+  // ================= P0 交互核心（013 已确认）：队列 / 状态条 / 卸载确认 / 分页 / 更新语义 =================
+  const TABLE_PAGE = 200;
+  let visibleRows = TABLE_PAGE;
+  let currentRows: PluginEntry[] = [];
+  let actionChain: Promise<void> = Promise.resolve();
+  let statusTimer = 0;
+  let statusEl: HTMLElement | null = null;
+  let moreObs: IntersectionObserver | null = null;
+  type QueuedTask = { label: string; cmd: string[] };
+  type FailInfo = { label: string; err: string };
+
+  /** 全局 busy：执行中禁掉所有变更按钮（安装/更新/卸载/全部更新/本地安装） */
+  function setBusy(on: boolean): void {
+    document.getElementById("view-plugins")?.classList.toggle("is-busy", on);
+  }
+
+  /** 插件页内状态条（P0-2）：busy=spinner+文字；ok=绿色淡出；error=红色保留 */
+  function setPluginStatus(kind: "busy" | "ok" | "error", msg: string, ttl = 0): void {
+    if (!statusEl) statusEl = document.getElementById("plugin-action-status");
+    if (!statusEl) return;
+    window.clearTimeout(statusTimer);
+    statusEl.classList.remove("busy", "ok", "error", "fade");
+    statusEl.hidden = false;
+    statusEl.innerHTML =
+      kind === "busy"
+        ? `<i class="spin">${iconSvg("refresh-cw")}</i><span>${escHtml(msg)}</span>`
+        : `<span>${escHtml(msg)}</span>`;
+    statusEl.classList.add(kind);
+    if (kind === "ok" && ttl > 0) {
+      statusTimer = window.setTimeout(() => statusEl?.classList.add("fade"), ttl);
     }
-    await loadInstalled();
-    renderOfficial();
-    renderTable();
-    updateBadge();
+  }
+
+  // —— 卸载二次确认（P0-3）：全局唯一 armed；外点 / Esc / 3s 复位 ——
+  const armedCleanups = new Set<() => void>();
+  const resetArmed = (): void => {
+    for (const fn of [...armedCleanups]) {
+      try { fn(); } catch { /* ignore */ }
+    }
+    armedCleanups.clear();
+  };
+  document.addEventListener("click", (ev) => {
+    if (!armedCleanups.size) return;
+    const t = ev.target as HTMLElement | null;
+    if (t && (t.closest(".confirm-armed") || t.closest(".cancel-mini"))) return;
+    resetArmed();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") resetArmed();
+  });
+
+  /** 表格行 / 详情面板的卸载按钮：就地进入「确认卸载 + 取消」，二次点击才执行 */
+  function confirmRemoveInPlace(btn: HTMLButtonElement, label: string, cmd: string[]): void {
+    if (btn.dataset.armed === "1") {
+      resetArmed();
+      enqueueAction([{ label, cmd }]);
+      return;
+    }
+    btn.dataset.armed = "1";
+    btn.classList.add("armed", "confirm-armed");
+    const origHtml = btn.innerHTML;
+    const origTitle = btn.title;
+    btn.textContent = t("plugins.confirmRemove");
+    btn.title = t("plugins.confirmRemoveHint");
+    const cancel = document.createElement("button");
+    cancel.className = "install-btn btn-icon cancel-mini";
+    cancel.textContent = t("plugins.cancel");
+    cancel.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      resetArmed();
+    });
+    btn.after(cancel);
+    const cleanup = (): void => {
+      if (!armedCleanups.has(cleanup)) return;
+      armedCleanups.delete(cleanup);
+      btn.dataset.armed = "";
+      btn.classList.remove("armed", "confirm-armed");
+      btn.innerHTML = origHtml;
+      btn.title = origTitle;
+      cancel.remove();
+    };
+    armedCleanups.add(cleanup);
+    window.setTimeout(cleanup, 3000);
+  }
+
+  /** 已安装 chip 的卸载：chip 就地展开「确认卸载 / 取消」 */
+  function armChipRemove(chip: HTMLElement, name: string, label: string): void {
+    if (chip.dataset.armed === "1") {
+      resetArmed();
+      enqueueAction([{ label, cmd: ["plugin", "--profile", "web", "remove", name] }]);
+      return;
+    }
+    chip.dataset.armed = "1";
+    chip.classList.add("chip-armed");
+    const origHtml = chip.innerHTML;
+    chip.textContent = "";
+    const txt = document.createElement("span");
+    txt.textContent = name;
+    chip.appendChild(txt);
+    const yes = document.createElement("button");
+    yes.className = "chip-rm confirm-armed";
+    yes.textContent = t("plugins.confirmRemove");
+    yes.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      resetArmed();
+      enqueueAction([{ label, cmd: ["plugin", "--profile", "web", "remove", name] }]);
+    });
+    const no = document.createElement("button");
+    no.className = "chip-rm cancel-mini";
+    no.textContent = t("plugins.cancel");
+    no.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      resetArmed();
+    });
+    chip.appendChild(yes);
+    chip.appendChild(no);
+    const cleanup = (): void => {
+      if (!armedCleanups.has(cleanup)) return;
+      armedCleanups.delete(cleanup);
+      chip.dataset.armed = "";
+      chip.classList.remove("chip-armed");
+      chip.innerHTML = origHtml;
+    };
+    armedCleanups.add(cleanup);
+    window.setTimeout(cleanup, 3000);
+  }
+
+  // —— 动作队列（P0-1）：全部变更操作串行，busy 互斥；批量只重启一次（P0-6）——
+  async function runTaskCommands(tasks: QueuedTask[]): Promise<FailInfo[]> {
+    const fails: FailInfo[] = [];
+    if (tasks.length === 1) {
+      const task = tasks[0];
+      try {
+        await runDshCmd(task.cmd);
+        opts.onAction(`✅ ${t("plugins.actDone", { label: task.label })}`);
+        await restartDsh();
+        opts.onAction(t("plugins.actRestarted"));
+      } catch (e) {
+        const err = String(e);
+        setPluginStatus("error", `${t("plugins.actFail", { label: task.label })}${err.slice(0, 120)}`);
+        opts.onAction(`❌ ${t("plugins.actFail", { label: task.label })}${err}`);
+        fails.push({ label: task.label, err });
+      }
+      return fails;
+    }
+    let done = 0;
+    for (const task of tasks) {
+      done++;
+      setPluginStatus("busy", `${t("plugins.updatingAll", { i: done, n: tasks.length })} · ${task.label}`);
+      try {
+        await runDshCmd(task.cmd);
+        opts.onAction(`✅ ${task.label}`);
+      } catch (e) {
+        const err = String(e);
+        opts.onAction(`❌ ${t("plugins.actFail", { label: task.label })}${err}`);
+        fails.push({ label: task.label, err });
+      }
+    }
+    if (tasks.length) {
+      try {
+        await restartDsh(); // 批量只重启一次
+        opts.onAction(t("plugins.actRestarted"));
+      } catch (e) {
+        fails.push({ label: "restart", err: String(e) });
+      }
+    }
+    return fails;
+  }
+
+  /** 全部变更操作统一入口：入队即互斥（禁用全部变更按钮），串行执行，页内可见状态 */
+  function enqueueAction(tasks: QueuedTask[]): void {
+    // 立即置 busy：双击/连点只产生一次命令（P0-1 验收）；队列期间所有变更按钮禁用
+    setBusy(true);
+    const run = actionChain.then(async () => {
+      setPluginStatus(
+        "busy",
+        tasks.length === 1
+          ? t("plugins.status.busy", { label: tasks[0].label })
+          : t("plugins.updatingAll", { i: 0, n: tasks.length })
+      );
+      const fails = await runTaskCommands(tasks);
+      try {
+        await loadInstalled();
+        renderOfficial();
+        renderTable(false);
+        updateBadge();
+        renderUpdateAllBtn();
+      } finally {
+        setBusy(false);
+      }
+      if (tasks.length === 1) {
+        if (fails.length) setPluginStatus("error", `${t("plugins.actFail", { label: tasks[0].label })}${fails[0].err.slice(0, 120)}`);
+        else setPluginStatus("ok", t("plugins.status.done", { label: tasks[0].label }), 5000);
+      } else if (fails.length) {
+        setPluginStatus("error", t("plugins.updateAllFail", { n: fails.length }));
+      } else {
+        setPluginStatus("ok", t("plugins.updateAllDone"), 5000);
+      }
+    });
+    actionChain = run.catch(() => setBusy(false));
+    void run;
+  }
+
+  // —— 全部更新（P0-6）：npm 可更新 + GitHub 重装批量执行；本地 file/link 不混入 ——
+  function collectUpdateTasks(): QueuedTask[] {
+    const tasks: QueuedTask[] = [];
+    for (const name of installedNames(installed)) {
+      const pkg = pkgNameOf(name);
+      const spec = installedSpecOf(pkg, name);
+      if (!spec) continue;
+      if (/^(file:|link:)/.test(spec)) continue; // 本地源不混入批量
+      if (/^(github:|git\+)/.test(spec)) {
+        // GitHub：以「重新安装」语义批量执行（已确认 npm + GitHub）
+        tasks.push({ label: `${t("plugins.reinstall")} ${pkg}`, cmd: ["plugin", "--profile", "web", "add", spec] });
+        continue;
+      }
+      const latest = versions[pkg];
+      const iv = installedVersionOf(spec);
+      if (latest && latest !== "—" && iv !== null && compareVer(latest, iv) > 0) {
+        tasks.push({ label: `${t("plugins.update")} ${pkg}`, cmd: ["plugin", "--profile", "web", "update", pkg] });
+      }
+    }
+    return tasks;
+  }
+
+  /** 已安装标题旁的「全部更新（n）」按钮 */
+  function renderUpdateAllBtn(): void {
+    const btn = document.getElementById("plugins-update-all") as HTMLButtonElement | null;
+    if (!btn) return;
+    const n = collectUpdateTasks().length;
+    btn.hidden = n === 0;
+    btn.innerHTML = `${iconSvg("refresh-cw")}<span>${escHtml(t("plugins.updateAll", { n }))}</span>`;
+  }
+
+  function updateAllUpdatable(): void {
+    const tasks = collectUpdateTasks();
+    if (!tasks.length) return;
+    enqueueAction(tasks);
+  }
+
+  // —— 表格分页（P0-4）：首屏 200 条 + 滚动加载更多 ——
+  function renderMore(rowsLen: number): void {
+    const moreEl = document.getElementById("plugin-table-more");
+    if (!moreEl) return;
+    const left = rowsLen - visibleRows;
+    if (left <= 0) {
+      moreEl.hidden = true;
+      if (moreObs) moreObs.disconnect();
+      return;
+    }
+    moreEl.hidden = false;
+    moreEl.textContent = t("plugins.loadMore");
+    if (moreObs) moreObs.disconnect();
+    moreObs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && visibleRows < rowsLen) {
+          visibleRows += TABLE_PAGE;
+          renderTable(false);
+        }
+      },
+      { root: document.getElementById("view-plugins"), rootMargin: "160px" }
+    );
+    moreObs.observe(moreEl);
+  }
+
+  /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装） */
+  function tableActionsHtmlFor(p: PluginEntry): string {
+    const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
+    const installedFlag = isInstalled(pkg) || isInstalled(p.name);
+    if (!installedFlag) {
+      return `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(p.installSpec)}" title="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
+    }
+    const npm = p.isNpm;
+    const instSpec = installedSpecOf(pkg, p.name);
+    const latest = versions[pkg];
+    let upHtml = "";
+    if (!npm) {
+      const upCmd = updateCommandFor(false, instSpec, pkg);
+      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="reinstall" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(t("plugins.reinstall"))}">${iconSvg("refresh-cw")}</button>`;
+    } else if (isUpdatable(p.name, pkg, latest)) {
+      const upCmd = updateCommandFor(true, instSpec, pkg);
+      const to = latest && latest !== "—" ? `${t("plugins.updateTo")} ${latest}` : t("plugins.update");
+      upHtml = `<button class="install-btn btn-icon" data-act="update" data-kind="update" data-name="${escHtml(pkg)}" data-cmd="${escHtml(upCmd.join("|"))}" title="${escHtml(to)}">${iconSvg("upload")}</button>`;
+    } else {
+      upHtml = `<button class="install-btn btn-icon" disabled title="${escHtml(t("plugins.alreadyLatest"))}">${iconSvg("check")}</button>`;
+    }
+    return `${upHtml} <button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
+  }
+
+  /** 绑定一行内的操作按钮（初始化渲染与版本回包增量共用） */
+  function bindRowActions(root: HTMLElement, p: PluginEntry): void {
+    const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
+    root.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) => {
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const act = b.dataset.act;
+        if (act === "install") {
+          enqueueAction([{ label: `${t("plugins.install")} ${b.dataset.spec}`, cmd: ["plugin", "--profile", "web", "add", b.dataset.spec!] }]);
+        } else if (act === "update") {
+          const cmd = (b.dataset.cmd || "").split("|");
+          const args = cmd.length >= 2 ? cmd : ["plugin", "--profile", "web", "update", b.dataset.spec!];
+          const label =
+            b.dataset.kind === "reinstall"
+              ? `${t("plugins.reinstall")} ${b.dataset.name || pkg}`
+              : `${t("plugins.update")} ${b.dataset.name || pkg}`;
+          enqueueAction([{ label, cmd: args }]);
+        } else if (act === "remove") {
+          confirmRemoveInPlace(b, `${t("plugins.remove")} ${b.dataset.name || p.name}`, ["plugin", "--profile", "web", "remove", b.dataset.name || p.name]);
+        }
+      });
+    });
+  }
+
+  /** 版本异步回包：只更新对应行的版本单元格 + 可更新操作区，不整表重渲（P0-4） */
+  function refreshRowVersions(changed: Record<string, string>): void {
+    const keys = Object.keys(changed);
+    if (!keys.length) return;
+    els.tbody.querySelectorAll<HTMLTableRowElement>("tr.plugin-row").forEach((tr) => {
+      const latest = changed[tr.dataset.pkg || ""];
+      if (latest === undefined || latest === null) return;
+      const idx = Number(tr.dataset.idx || "-1");
+      const p = idx >= 0 && idx < currentRows.length ? currentRows[idx] : undefined;
+      if (!p) return;
+      const verCell = tr.querySelector<HTMLElement>("td.ver");
+      if (verCell) {
+        verCell.innerHTML = p.isNpm ? escHtml(latest || "—") : verCell.innerHTML;
+      }
+      const actionsCell = tr.querySelector<HTMLElement>("td.actions");
+      if (actionsCell && p.isNpm) {
+        actionsCell.innerHTML = tableActionsHtmlFor(p);
+        bindRowActions(actionsCell, p);
+      }
+    });
   }
 
   // ===== 本地插件安装（.tgz 或插件目录）=====
@@ -831,18 +1168,13 @@ export function initPlugins(opts: PluginCenterOptions): void {
   const installLocalBtn = $(INSTALL_LOCAL_BTN) as HTMLButtonElement | null;
   const localPathInput = $(LOCAL_PATH_INPUT) as HTMLInputElement | null;
 
-  /** 执行一次本地插件安装（spec 为 file: 前缀的本地路径 spec），走统一 performAction */
-  async function doLocalInstall(spec: string): Promise<void> {
-    if (!installLocalBtn) return;
-    installLocalBtn.disabled = true;
-    try {
-      await performAction(`${t("plugins.install")} ${spec}`, ["plugin", "--profile", "web", "add", spec]);
-    } catch (e) {
-      opts.onAction(`❌ ${t("plugins.localInstallFail", { err: String(e) })}`);
-    } finally {
-      installLocalBtn.disabled = false;
-      renderTable();
+  /** 执行一次本地插件安装（spec 为 file: 前缀的本地路径 spec），走统一动作队列 */
+  function doLocalInstall(spec: string): void {
+    if (!spec) {
+      opts.onAction(`❌ ${t("plugins.localEmpty")}`);
+      return;
     }
+    enqueueAction([{ label: `${t("plugins.install")} ${spec}`, cmd: ["plugin", "--profile", "web", "add", spec] }]);
   }
 
   async function installLocalPlugin(): Promise<void> {
@@ -875,7 +1207,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
     if (ev.key === "Enter") void doLocalInstall(localPathInput.value.trim() ? (localPathInput.value.trim().startsWith("file:") ? localPathInput.value.trim() : `file:${localPathInput.value.trim()}`) : "");
   });
 
-  /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺；force=true 强制刷新 */
+  /** 自动更新检查：拉取已安装 npm 插件的最新版本。force=false 只补缺；force=true 强制刷新。
+   * 回包后仅增量更新对应行（P0-4），不整表重渲。 */
   async function checkInstalledUpdates(force: boolean): Promise<void> {
     const names = [
       ...new Set(
@@ -887,16 +1220,22 @@ export function initPlugins(opts: PluginCenterOptions): void {
     ];
     const todo = force ? names : names.filter((n) => !versions[n] || versions[n] === "—");
     if (!todo.length) return;
+    const changed: Record<string, string> = {};
     let i = 0;
     const pool = 3;
     const worker = async (): Promise<void> => {
       while (i < todo.length) {
         const name = todo[i++];
-        versions[name] = await fetchVersion(name);
+        const v = await fetchVersion(name);
+        if (v !== "—" && v !== versions[name]) changed[name] = v;
+        versions[name] = v;
       }
     };
     await Promise.all(Array.from({ length: Math.min(pool, todo.length) }, () => worker()));
     await persistCache(false);
+    refreshRowVersions(changed);
+    updateBadge();
+    renderUpdateAllBtn();
   }
 
   /** 后台刷新：从 CDN 拉最新 registry → diff → 替换展示 + 持久化缓存 */
@@ -943,7 +1282,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     };
     renderBanner();
     renderCategories();
-    renderTable();
+    renderTable(true);
     updateBadge();
     await persistCache(true);
     els.refresh.disabled = false;
@@ -954,19 +1293,28 @@ export function initPlugins(opts: PluginCenterOptions): void {
     void refreshLatest().then(() =>
       void checkInstalledUpdates(true).then(() => {
         updateBadge();
-        renderTable();
+        renderUpdateAllBtn();
+        renderTable(false);
       })
     );
   });
+  let searchTimer = 0;
   els.search.addEventListener("input", () => {
-    filterText = els.search.value;
-    renderTable();
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      filterText = els.search.value;
+      renderTable(true);
+      const v = document.getElementById("view-plugins");
+      if (v) v.scrollTop = 0;
+    }, 150);
   });
 
   // ===== npm 按包名实时搜索 + 一键安装 =====
   let npmTimer = 0;
+  let npmSearchSeq = 0; // P0-5 竞态保护：旧请求不覆盖新结果
   async function runNpmSearch(): Promise<void> {
     if (!els.npmSearch || !els.npmResults || !els.npmGo) return;
+    const seq = ++npmSearchSeq;
     const q = els.npmSearch.value.trim();
     if (!q) {
       els.npmResults.hidden = true;
@@ -978,6 +1326,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearching"))}</div>`;
     try {
       const items = await searchNpm(q);
+      if (seq !== npmSearchSeq) return; // 过期结果丢弃
       if (!items.length) {
         els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmNoResult"))}</div>`;
         return;
@@ -1011,16 +1360,17 @@ export function initPlugins(opts: PluginCenterOptions): void {
         } else {
           btn.innerHTML = iconSvg("download") + t("plugins.install");
           btn.addEventListener("click", () =>
-            performAction(`${t("plugins.install")} ${name}`, ["plugin", "--profile", "web", "add", name])
+            enqueueAction([{ label: `${t("plugins.install")} ${name}`, cmd: ["plugin", "--profile", "web", "add", name] }])
           );
         }
         row.appendChild(btn);
         els.npmResults.appendChild(row);
       }
     } catch (e) {
+      if (seq !== npmSearchSeq) return;
       els.npmResults.innerHTML = `<div class="detail-note">${escHtml(t("plugins.npmSearchFail", { err: String(e) }))}</div>`;
     } finally {
-      els.npmGo.disabled = false;
+      if (seq === npmSearchSeq) els.npmGo.disabled = false;
     }
   }
 
@@ -1033,15 +1383,19 @@ export function initPlugins(opts: PluginCenterOptions): void {
     if (ev.key === "Enter") void runNpmSearch();
   });
 
+  // P0-6：全部更新（批量执行，只重启一次 DSH）
+  document.getElementById("plugins-update-all")?.addEventListener("click", () => updateAllUpdatable());
+
   window.addEventListener("lang-changed", () => {
     els.refreshLabel.textContent = t("plugins.refresh");
     void loadInstalled();
     renderSourceTabs();
     renderCategories();
     renderOfficial();
-    renderTable();
+    renderTable(true);
     renderBanner();
     updateBadge();
+    renderUpdateAllBtn();
   });
 
   // 初始化：已安装 → 缓存（含 registry 快照 + 版本播种，跳过已安装）→ 秒开渲染快照 → 后台刷新 + 已安装更新检查 + 每 6h 定时
@@ -1051,15 +1405,17 @@ export function initPlugins(opts: PluginCenterOptions): void {
     renderSourceTabs();
     renderCategories();
     renderOfficial();
-    renderTable();
+    renderTable(true);
     renderBanner();
     await checkInstalledUpdates(false);
     updateBadge();
+    renderUpdateAllBtn();
     void refreshLatest();
     window.setInterval(() => {
       void checkInstalledUpdates(true).then(() => {
         updateBadge();
-        if (document.getElementById("view-plugins")?.classList.contains("active")) renderTable();
+        renderUpdateAllBtn();
+        if (document.getElementById("view-plugins")?.classList.contains("active")) renderTable(false);
       });
     }, UPDATE_CHECK_INTERVAL_MS);
   })();

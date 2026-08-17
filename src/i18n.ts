@@ -202,6 +202,21 @@ const DICT: Record<string, Entry> = {
   "plugins.snapshot.src.cache": { zh: "上次缓存", en: "cached" },
   "plugins.snapshot.src.cdn": { zh: "最新", en: "live" },
 
+  // ===== P0 交互（动作队列 / 状态条 / 卸载确认 / 更新语义） =====
+  "plugins.status.busy": { zh: "{label}执行中…", en: "{label} running…" },
+  "plugins.status.done": { zh: "{label}完成", en: "{label} done" },
+  "plugins.confirmRemove": { zh: "确认卸载", en: "Confirm remove" },
+  "plugins.confirmRemoveHint": { zh: "再次点击确认卸载；点击其它位置或按 Esc 取消", en: "Click again to remove; click elsewhere or press Esc to cancel" },
+  "plugins.cancel": { zh: "取消", en: "Cancel" },
+  "plugins.reinstall": { zh: "重新安装", en: "Reinstall" },
+  "plugins.alreadyLatest": { zh: "已是最新", en: "Up to date" },
+  "plugins.updateAll": { zh: "全部更新（{n}）", en: "Update all ({n})" },
+  "plugins.updatingAll": { zh: "正在批量更新 {i}/{n}…", en: "Updating {i}/{n}…" },
+  "plugins.updateAllDone": { zh: "全部更新完成，DSH 已重启", en: "All updated, DSH restarted" },
+  "plugins.updateAllFail": { zh: "{n} 项更新失败，其余已完成并重启 DSH", en: "{n} failed; the rest updated and DSH restarted" },
+  "plugins.loadMore": { zh: "滚动加载更多…", en: "Scroll to load more…" },
+  "plugins.loadAll": { zh: "已全部加载（共 {n} 条）", en: "All loaded ({n} total)" },
+
   // ===== 设置 =====
   "settings.title": { zh: "设置", en: "Settings" },
   "settings.registry.title": { zh: "npm 镜像源", en: "npm registry" },
