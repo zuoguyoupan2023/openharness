@@ -360,6 +360,8 @@ async function boot(): Promise<void> {
   // ===== 多标签页 =====
   tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
   void tabManager.initEvents();
+  // 启动标签策略：恢复上次会话（开关可关）+ 默认标签页（如 chat.deepseek.com，静默创建）
+  void tabManager.applyStartupPolicy();
 
   // ===== 统一链接打开方式 =====
   registerLinkOpener({

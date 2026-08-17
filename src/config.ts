@@ -14,14 +14,33 @@ export interface Settings {
   dshVersionLocked: string | null;
   /** DSH 更新模式：auto = 自动更新（默认）；manual = 手动更新 */
   dshUpdateMode: string;
+  /** 启动时额外默认打开的标签页 URL 列表（不含 3080，3080 固定主标签） */
+  defaultTabs: string[];
+  /** 启动时是否恢复上次会话（默认 true） */
+  restoreSession: boolean;
 }
 
 export async function getSettings(): Promise<Settings> {
   try {
     return await invoke<Settings>("get_settings");
   } catch {
-    return { registry: NPM_OFFICIAL, closeWithApp: true, dshVersionLocked: null, dshUpdateMode: "auto" };
+    return {
+      registry: NPM_OFFICIAL,
+      closeWithApp: true,
+      dshVersionLocked: null,
+      dshUpdateMode: "auto",
+      defaultTabs: [],
+      restoreSession: true,
+    };
   }
+}
+
+export async function setDefaultTabs(tabs: string[]): Promise<Settings> {
+  return invoke<Settings>("set_default_tabs", { tabs });
+}
+
+export async function setRestoreSession(enabled: boolean): Promise<Settings> {
+  return invoke<Settings>("set_restore_session", { enabled });
 }
 
 export async function setRegistry(url: string): Promise<Settings> {

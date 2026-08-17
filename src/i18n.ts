@@ -367,6 +367,29 @@ const DICT: Record<string, Entry> = {
   "settings.version.updating": { zh: "正在更新到 v{latest} 并重启 DSH…", en: "Updating to v{latest} and restarting DSH…" },
   "settings.version.updated": { zh: "✓ 已更新到 v{latest}", en: "Updated to v{latest}" },
   "settings.version.errSave": { zh: "⚠️ 保存失败：", en: "Save failed: " },
+
+  // ===== 默认打开标签页（默认标签 + 恢复会话） =====
+  "settings.tabs.title": { zh: "默认打开标签页", en: "Default tabs" },
+  "settings.tabs.desc": {
+    zh: "启动 app 时自动打开的标签页。主标签 3080（DSH 服务）固定不可修改；可添加常用网页（如 DeepSeek 官方对话 https://chat.deepseek.com），添加的标签在后台静默打开，不抢占 3080 主窗口。",
+    en: "Tabs opened automatically on launch. The main tab :3080 (DSH service) is fixed; add常用 sites like the official DeepSeek chat (https://chat.deepseek.com) — they open quietly in the background without stealing focus from :3080.",
+  },
+  "settings.tabs.fixed": { zh: "固定（DSH 主标签，不可删除）", en: "Fixed (DSH main tab)" },
+  "settings.tabs.add": { zh: "添加", en: "Add" },
+  "settings.tabs.placeholder": { zh: "https://chat.deepseek.com", en: "https://chat.deepseek.com" },
+  "settings.tabs.added": { zh: "✓ 已添加", en: "Added" },
+  "settings.tabs.removed": { zh: "✓ 已删除", en: "Removed" },
+  "settings.tabs.invalid": { zh: "⚠️ 无效网址（仅支持 http/https 完整地址）", en: "Invalid URL (http/https only)" },
+  "settings.tabs.saved": { zh: "✓ 已保存", en: "Saved" },
+  "settings.tabs.restoreLabel": {
+    zh: "启动时恢复上次会话（重新打开关闭 app 前正在使用的标签，含网页与自定义默认标签；默认开启，对齐 Safari）",
+    en: "Restore the last session on launch (reopen the tabs that were open when the app quit, incl. web tabs and custom default tabs; on by default, like Safari)",
+  },
+  "settings.tabs.note": {
+    zh: "关闭「恢复上次会话」后，启动时只打开 3080 与上面列表中的默认标签。",
+    en: "With “Restore last session” off, launch opens only :3080 plus the default tabs listed above.",
+  },
+  "settings.tabs.errSave": { zh: "⚠️ 保存失败：", en: "Save failed: " },
   "settings.appearance.title": { zh: "外观", en: "Appearance" },
   "settings.appearance.desc": {
     zh: "切换界面浅色 / 深色主题。对话标签内的网页内容由 DSH 自身控制，不随此切换。",

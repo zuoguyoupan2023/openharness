@@ -105,10 +105,21 @@ struct Settings {
     /// manual = 锁定当前版本，仅当用户点击「更新到最新版」才升级。
     #[serde(default = "default_update_mode")]
     dsh_update_mode: String,
+    /// 启动时额外默认打开的标签页（不含 3080 —— 3080 为固定主标签，永远打开）。
+    /// 每个元素为完整 URL，如 "https://chat.deepseek.com"。
+    #[serde(default)]
+    default_tabs: Vec<String>,
+    /// 启动时是否恢复上次会话（关闭 app 前打开过的标签；默认开启，对齐 Safari）
+    #[serde(default = "default_true")]
+    restore_session: bool,
 }
 
 /// 缺失字段的默认值；close_with_app 缺省为 true（随 app 关闭）
 fn default_close_with_app() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -124,6 +135,8 @@ impl Default for Settings {
             close_with_app: true,
             dsh_version_locked: None,
             dsh_update_mode: "auto".to_string(),
+            default_tabs: Vec::new(),
+            restore_session: true,
         }
     }
 }
@@ -360,6 +373,69 @@ fn dsh_effective_pkg(s: &Settings) -> String {
 fn dsh_pkg_arg(app: &AppHandle) -> String {
     let s = load_settings(app);
     dsh_effective_pkg(&s)
+}
+
+/// 设置「启动时额外默认打开的标签页」。
+/// 3080 是固定主标签，永远是启动第一标签，不允许出现在该列表里（自动过滤）。
+#[tauri::command]
+fn set_default_tabs(app: AppHandle, tabs: Vec<String>) -> Result<Settings, String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for t in tabs {
+        let u = t.trim().to_string();
+        if u.is_empty() {
+            continue;
+        }
+        // 仅允许 http(s) 完整 URL；去掉多余结尾斜杠便于去重
+        let norm = normalize_default_tab_url(&u);
+        if norm.is_none() {
+            continue;
+        }
+        let n = norm.unwrap();
+        if n == DSH_URL {
+            continue; // 3080 固定主标签，不可作为默认标签
+        }
+        if seen.insert(n.clone()) {
+            cleaned.push(n);
+        }
+    }
+    let mut s = load_settings(&app);
+    s.default_tabs = cleaned;
+    save_settings(&app, &s)?;
+    Ok(s)
+}
+
+/// 规范化默认标签 URL：仅接受 http(s)，去掉末尾斜杠（保留路径与查询串）
+fn normalize_default_tab_url(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return None;
+    }
+    let mut out = format!("{}://{}", url.scheme(), url.host_str()?);
+    if let Some(p) = url.port() {
+        out.push_str(&format!(":{}", p));
+    }
+    // 去掉末尾斜杠（根路径 "/" 保留，使 "https://chat.deepseek.com" 与其带斜杠写法归一相同）
+    let mut path = url.path().to_string();
+    if path.len() > 1 {
+        while path.ends_with('/') {
+            path.pop();
+        }
+    }
+    out.push_str(&path);
+    if let Some(q) = url.query() {
+        out.push_str(&format!("?{}", q));
+    }
+    Some(out)
+}
+
+/// 设置「启动时恢复上次会话」（默认开启）
+#[tauri::command]
+fn set_restore_session(app: AppHandle, enabled: bool) -> Result<Settings, String> {
+    let mut s = load_settings(&app);
+    s.restore_session = enabled;
+    save_settings(&app, &s)?;
+    Ok(s)
 }
 
 /// 当前 DSH web 的主题 / 语言偏好快照（供壳 UI 与其双向同步）
@@ -2250,6 +2326,8 @@ fn main() {
             dsh_version_info,
             set_dsh_version_lock,
             set_dsh_update_mode,
+            set_default_tabs,
+            set_restore_session,
             dsh_settings_snapshot,
             dsh_settings_set,
             dsh_settings_subscribe,

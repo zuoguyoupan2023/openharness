@@ -1,6 +1,6 @@
-// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 更新）
-import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode } from "./dsh";
-import { getSettings, setRegistry, setCloseWithApp, NPM_MIRROR } from "./config";
+// src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 更新、默认标签页）
+import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode, DSH_URL } from "./dsh";
+import { getSettings, setRegistry, setCloseWithApp, setDefaultTabs, setRestoreSession, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
 import { getLinkMode, setLinkMode, LinkOpenMode } from "./open-link";
@@ -358,5 +358,110 @@ export function initSettings(): void {
     curMode = s.dshUpdateMode === "manual" ? "manual" : "auto";
     syncModeUI();
     void loadVersionInfo();
+  });
+
+  // ===== 默认打开标签页（3080 固定 + 用户默认标签 + 恢复会话开关） =====
+  const defTabsList = document.getElementById("default-tabs-list") as HTMLElement | null;
+  const defTabsInput = document.getElementById("default-tabs-input") as HTMLInputElement | null;
+  const defTabsAdd = document.getElementById("default-tabs-add") as HTMLButtonElement | null;
+  const defTabsSaved = document.getElementById("default-tabs-saved") as HTMLSpanElement | null;
+  const restoreSessionEl = document.getElementById("settings-restore-session") as HTMLInputElement | null;
+
+  let defaultTabs: string[] = [];
+
+  const defMsg = (m: string): void => {
+    if (defTabsSaved) {
+      defTabsSaved.textContent = m;
+      setTimeout(() => {
+        defTabsSaved.textContent = "";
+      }, 6000);
+    }
+  };
+
+  const renderDefaultTabs = (): void => {
+    if (!defTabsList) return;
+    defTabsList.innerHTML = "";
+    // 固定行：3080（DSH 主标签，不可删除）
+    const fixed = document.createElement("div");
+    fixed.className = "default-tab-item";
+    const fixedUrl = document.createElement("span");
+    fixedUrl.className = "dt-url";
+    fixedUrl.textContent = DSH_URL;
+    const fixedTag = document.createElement("span");
+    fixedTag.className = "dt-fixed";
+    fixedTag.textContent = t("settings.tabs.fixed");
+    fixed.appendChild(fixedUrl);
+    fixed.appendChild(fixedTag);
+    defTabsList.appendChild(fixed);
+    // 用户默认标签行
+    for (const url of defaultTabs) {
+      const item = document.createElement("div");
+      item.className = "default-tab-item";
+      const span = document.createElement("span");
+      span.className = "dt-url";
+      span.textContent = url;
+      span.title = url;
+      const del = document.createElement("button");
+      del.className = "dt-del";
+      del.textContent = "×";
+      del.title = t("tab.close");
+      del.addEventListener("click", () => void removeDefaultTab(url));
+      item.appendChild(span);
+      item.appendChild(del);
+      defTabsList.appendChild(item);
+    }
+  };
+
+  const saveDefaultTabs = async (next: string[]): Promise<void> => {
+    try {
+      const s = await setDefaultTabs(next);
+      defaultTabs = s.defaultTabs || [];
+      renderDefaultTabs();
+    } catch (e) {
+      defMsg(t("settings.tabs.errSave") + String(e));
+    }
+  };
+
+  const removeDefaultTab = async (url: string): Promise<void> => {
+    await saveDefaultTabs(defaultTabs.filter((u) => u !== url));
+    defMsg(t("settings.tabs.removed"));
+  };
+
+  if (defTabsAdd && defTabsInput) {
+    const tryAdd = async (): Promise<void> => {
+      const raw = defTabsInput!.value.trim();
+      if (!raw) return;
+      const before = defaultTabs.length;
+      await saveDefaultTabs([...defaultTabs, raw]);
+      // 保存成功与否看后端规范化后的长度：+1 = 合法新标签；不变 = 无效/重复/3080
+      if (defaultTabs.length <= before) {
+        defMsg(t("settings.tabs.invalid"));
+        return;
+      }
+      defTabsInput!.value = "";
+      defMsg(t("settings.tabs.added"));
+    };
+    defTabsAdd.addEventListener("click", () => void tryAdd());
+    defTabsInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") void tryAdd();
+    });
+  }
+
+  if (restoreSessionEl) {
+    restoreSessionEl.addEventListener("change", async () => {
+      try {
+        await setRestoreSession(restoreSessionEl.checked);
+        defMsg(t("settings.tabs.saved"));
+      } catch (e) {
+        defMsg(t("settings.tabs.errSave") + String(e));
+      }
+    });
+  }
+
+  // 初始化：加载默认标签列表与恢复会话开关状态
+  void getSettings().then((s) => {
+    defaultTabs = Array.isArray(s.defaultTabs) ? s.defaultTabs : [];
+    if (restoreSessionEl) restoreSessionEl.checked = s.restoreSession !== false;
+    renderDefaultTabs();
   });
 }

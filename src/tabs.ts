@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { t } from "./i18n";
 import { openLink } from "./open-link";
 import { recordHistory, renderHistoryPage, clearHistory } from "./history";
+import { getSettings } from "./config";
 
 export type TabType = "dsh" | "web" | "blank" | "history";
 
@@ -66,6 +67,22 @@ function hostOf(url: string): string {
 
 function makeId(): string {
   return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/** 两个 URL 是否视为同一个标签页（忽略末尾斜杠与 hash；host 大小写不敏感） */
+function sameTabUrl(a: string, b: string): boolean {
+  const norm = (u: string): string => {
+    try {
+      const x = new URL(u);
+      x.hash = "";
+      let p = x.pathname;
+      if (p.length > 1) p = p.replace(/\/+$/, "");
+      return x.origin.toLowerCase() + p + x.search;
+    } catch {
+      return u;
+    }
+  };
+  return norm(a) === norm(b);
 }
 
 export class TabManager {
@@ -214,6 +231,52 @@ export class TabManager {
 
   getActive(): TabData | null {
     return this.tabs.find((t) => t.id === this.activeId) ?? null;
+  }
+
+  /**
+   * 启动标签策略（设置页「默认打开标签页」卡片联动；boot 时异步调用）：
+   * 1. 3080 恒为主标签，位于最前且默认激活（主显示区永远是 DSH 窗口）；
+   * 2. restoreSession=false → 清掉上次会话，只保留 3080；
+   * 3. 默认标签（如 chat.deepseek.com）静默创建（不抢焦点），与恢复的会话去重。
+   */
+  async applyStartupPolicy(): Promise<void> {
+    let restoreSession = true;
+    let defaultTabs: string[] = [];
+    try {
+      const s = await getSettings();
+      restoreSession = s.restoreSession !== false;
+      defaultTabs = Array.isArray(s.defaultTabs) ? s.defaultTabs : [];
+    } catch {
+      // 设置不可读时按默认策略（恢复会话 + 无默认标签），不阻塞启动
+    }
+    // 1) 不恢复会话 → 丢弃所有非 DSH 标签
+    if (!restoreSession) {
+      this.tabs = this.tabs.filter((t) => t.type === "dsh");
+    }
+    // 2) 确保 DSH 主标签存在且位于最前
+    if (!this.tabs.some((t) => t.type === "dsh")) {
+      this.tabs.unshift({
+        id: "dsh-" + makeId(),
+        title: "DeepSeek Harness",
+        url: DSH_URL,
+        type: "dsh",
+        history: [DSH_URL],
+        historyIdx: 0,
+      });
+    } else {
+      const dshTabs = this.tabs.filter((t) => t.type === "dsh");
+      const others = this.tabs.filter((t) => t.type !== "dsh");
+      this.tabs = [...dshTabs, ...others];
+    }
+    // 3) 默认标签：静默创建、去重（恢复的会话里已有则不重复开）
+    for (const url of defaultTabs) {
+      if (this.tabs.some((t) => sameTabUrl(t.url, url))) continue;
+      this.addTab("web", url, false);
+    }
+    // 4) 默认激活 = DSH 主标签（主显示区恒为 3080）
+    const dshTab = this.tabs.find((t) => t.type === "dsh");
+    this.activate(dshTab ? dshTab.id : this.tabs[0].id);
+    this.persist();
   }
 
   /** 打开/激活历史标签页：已有历史标签则激活，否则新建 */

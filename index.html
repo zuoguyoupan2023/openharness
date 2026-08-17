@@ -1483,6 +1483,46 @@
     .version-line .vval.good { color: var(--ok-text); }
     .version-line .vval.warn { color: var(--warn-text, #e2b93d); }
 
+    /* ===== 默认打开标签页卡片 ===== */
+    .default-tabs-list { display: flex; flex-direction: column; gap: 6px; }
+    .default-tab-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    .default-tab-item .dt-url { color: var(--text-bright); word-break: break-all; flex: 1; }
+    .default-tab-item .dt-fixed { color: var(--text-faint); font-size: 0.75rem; flex-shrink: 0; }
+    .default-tab-item .dt-del {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 2px 6px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .default-tab-item .dt-del:hover { color: #e5484d; background: rgba(229, 72, 77, 0.12); }
+    .dt-input {
+      flex: 1;
+      max-width: 340px;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+    }
+    .dt-input:focus { border-color: var(--accent-border); }
+
     /* ===== Node.js 环境准备向导（覆盖层） ===== */
     #node-wizard {
       position: fixed;
@@ -1888,6 +1928,30 @@
           </button>
           <span id="version-saved" class="setting-saved"></span>
         </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">
+          <i data-icon="globe"></i>
+          <span data-i18n="settings.tabs.title">默认打开标签页</span>
+        </div>
+        <div class="setting-desc" data-i18n="settings.tabs.desc">
+          启动 app 时自动打开的标签页。主标签 3080（DSH 服务）固定不可修改；可添加常用网页（如 DeepSeek 官方对话 https://chat.deepseek.com），添加的标签在后台静默打开，不抢占 3080 主窗口。
+        </div>
+        <div id="default-tabs-list" class="default-tabs-list"></div>
+        <div class="setting-row">
+          <input id="default-tabs-input" class="dt-input" placeholder="https://chat.deepseek.com" data-i18n-placeholder="settings.tabs.placeholder" spellcheck="false" />
+          <button id="default-tabs-add" class="btn-icon">
+            <i data-icon="plus"></i>
+            <span data-i18n="settings.tabs.add">添加</span>
+          </button>
+          <span id="default-tabs-saved" class="setting-saved"></span>
+        </div>
+        <label class="setting-radio" style="align-items:flex-start;margin-top:6px;">
+          <input type="checkbox" id="settings-restore-session" style="margin-top:2px;" />
+          <span data-i18n="settings.tabs.restoreLabel">启动时恢复上次会话（重新打开关闭 app 前正在使用的标签，含网页与自定义默认标签；默认开启，对齐 Safari）</span>
+        </label>
+        <div class="setting-desc" style="font-size:0.76rem;color:var(--text-faint);"><span data-i18n="settings.tabs.note">关闭「恢复上次会话」后，启动时只打开 3080 与上面列表中的默认标签。</span></div>
       </div>
 
       <div class="setting-group">
