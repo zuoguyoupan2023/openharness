@@ -35,11 +35,28 @@ const DICT: Record<string, Entry> = {
   "url.fwd": { zh: "前进", en: "Forward" },
   "url.reload": { zh: "刷新", en: "Reload" },
   "url.home": { zh: "新标签页主页", en: "Home / new tab" },
+  "url.history": { zh: "历史记录", en: "History" },
   "url.go": { zh: "前往", en: "Go" },
   "url.placeholder": {
     zh: "输入网址或搜索内容，回车前往…",
     en: "Type a URL or search, press Enter…",
   },
+
+  // ===== 打开链接方式 =====
+  "link.dialogTitle": { zh: "打开链接", en: "Open link" },
+  "link.inApp": { zh: "在 App 内打开", en: "Open in app" },
+  "link.external": { zh: "用浏览器打开", en: "Open in browser" },
+  "link.neverAsk": { zh: "下次不再询问，始终用这种方式打开", en: "Don't ask again, always use this way" },
+  "link.openedInternal": { zh: "已在 App 内新标签页打开", en: "Opened in a new app tab" },
+
+  // ===== 历史记录 =====
+  "history.title": { zh: "历史记录", en: "History" },
+  "history.clear": { zh: "清空", en: "Clear" },
+  "history.close": { zh: "关闭", en: "Close" },
+  "history.today": { zh: "今天", en: "Today" },
+  "history.yesterday": { zh: "昨天", en: "Yesterday" },
+  "history.earlier": { zh: "更早", en: "Earlier" },
+  "history.empty": { zh: "暂无浏览记录", en: "No browsing history" },
 
   // ===== 对话视图 =====
   "chat.waiting": { zh: "正在启动 DeepSeek Harness，请稍候…", en: "Starting DeepSeek Harness, please wait…" },
@@ -335,6 +352,15 @@ const DICT: Record<string, Entry> = {
   "settings.appearance.system": { zh: "跟随系统", en: "Follow system" },
   "settings.appearance.light": { zh: "亮色", en: "Light" },
   "settings.appearance.dark": { zh: "暗色", en: "Dark" },
+  "settings.links.title": { zh: "链接打开方式", en: "Link opening behavior" },
+  "settings.links.desc": {
+    zh: "点击网页链接时的默认打开方式。选择「每次询问」时，点击链接会弹出选择框，也可以勾选「不再提示」记住本次选择。",
+    en: "How links are opened by default. With “Ask every time”, a chooser appears on each link click; you can also tick “don’t ask again” to remember the choice.",
+  },
+  "settings.links.ask": { zh: "每次询问", en: "Ask every time" },
+  "settings.links.internal": { zh: "始终在 App 内打开（新标签页）", en: "Always open in app (new tab)" },
+  "settings.links.external": { zh: "始终用系统浏览器打开", en: "Always open in system browser" },
+  "settings.links.saved": { zh: "✓ 已保存，立即生效", en: "Saved — applied immediately" },
   "settings.lang.title": { zh: "语言", en: "Language" },
   "settings.lang.desc": { zh: "界面语言切换（日志与进程输出保持原文）。", en: "UI language (logs and process output stay as-is)." },
 

@@ -43,6 +43,8 @@ const NEEDED = [
   "check", // 插件中心：刷新成功提示条
   "triangle-alert", // 插件中心：刷新失败提示条（lucide 新名，旧 alert-triangle 已改名）
   "folder-open", // 插件中心：安装本地插件
+  "clock", // 对话视图：历史记录按钮
+  "external-link", // 设置：链接打开方式组 + 打开链接对话框
 ];
 
 const out = {};
