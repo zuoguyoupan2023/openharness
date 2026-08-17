@@ -525,6 +525,8 @@
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(2px);
     }
+    /* 关键修复：display:flex 会覆盖 HTML hidden 属性，导致对话框默认可见且无法关闭 */
+    .link-dialog[hidden] { display: none !important; }
     .link-dialog-box {
       width: min(460px, 90vw);
       background: var(--panel);

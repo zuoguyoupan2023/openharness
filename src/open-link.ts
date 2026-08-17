@@ -7,12 +7,13 @@ import { recordHistory } from "./history";
 export type LinkOpenMode = "ask" | "internal" | "external";
 
 const MODE_KEY = "dsh-link-open-mode";
-const DEFAULT_MODE: LinkOpenMode = "ask";
+const DEFAULT_MODE: LinkOpenMode = "internal";
 
 export function getLinkMode(): LinkOpenMode {
   try {
     const v = localStorage.getItem(MODE_KEY);
-    if (v === "internal" || v === "external" || v === "ask") return v;
+    // 默认 App 内打开；ask（每次询问）仅在设置里显式选择时生效
+    if (v === "internal" || v === "external") return v;
   } catch {
     /* 忽略 */
   }
