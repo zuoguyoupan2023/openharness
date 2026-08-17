@@ -33,8 +33,6 @@ import { initLang, setLang, getLang, t } from "./i18n";
 import { initTheme, cycleTheme, effectiveTheme, getThemePref } from "./theme";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { startDshSettingsSync, pushPref } from "./dsh-settings";
-import { registerLinkOpener, openLink } from "./open-link";
-import { renderHistoryList, clearHistory } from "./history";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -118,9 +116,9 @@ function initTerminalPanel(): void {
       void termKill(id).catch(() => {});
       terms?.closeShell(id);
     },
-    // 点击终端输出中的 URL → 按用户设置的链接打开方式处理
+    // 点击终端输出中的 URL → 系统浏览器打开
     onWebLink(uri) {
-      openLink(uri);
+      void openUrl(uri).catch(() => {});
     },
   });
 
@@ -258,8 +256,8 @@ const REFERRAL_URL = "https://opencode.ai/go?ref=3Y4AMWZX88";
 function initReferral(): void {
   const btn = document.getElementById("referral-toggle");
   btn?.addEventListener("click", () => {
-    // 统一走链接打开方式（默认浏览器打开，用户可在设置中更改）
-    openLink(REFERRAL_URL);
+    // 用 opener 插件在系统默认浏览器打开（Tauri 主 WebView 内 window.open 不可靠）
+    void openUrl(REFERRAL_URL);
   });
 }
 
@@ -361,77 +359,6 @@ async function boot(): Promise<void> {
   // ===== 多标签页 =====
   tabManager = new TabManager($("tab-list"), $("iframe-stack"), $("url-input") as HTMLInputElement);
   void tabManager.initEvents();
-
-  // ===== 统一链接打开方式 =====
-  registerLinkOpener({
-    openInApp: (url) => {
-      tabManager.addTab("web", url);
-    },
-    openExternal: (url) => {
-      void openUrl(url).catch(() => {});
-    },
-  });
-
-  // 全局链接点击拦截（capture 阶段，先于页面内联处理）：
-  // target=_blank 与站外 http(s) 链接统一走「打开方式」；站内/锚点/非网页协议放行。
-  document.addEventListener(
-    "click",
-    (ev) => {
-      const target = ev.target as HTMLElement | null;
-      const a = target?.closest?.("a[href]") as HTMLAnchorElement | null;
-      if (!a) return;
-      const abs = a.href; // 浏览器已解析的绝对地址
-      if (!abs || abs.startsWith("#")) return;
-      if (!/^https?:\/\//i.test(abs)) return; // mailto:/tel:/file: 等交给系统默认
-      const isBlank = a.target === "_blank" || /\bnoopener\b|\bexternal\b/.test(a.rel || "");
-      const isForeign = (() => {
-        try {
-          return new URL(abs).origin !== location.origin;
-        } catch {
-          return true;
-        }
-      })();
-      if (isBlank || isForeign) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        openLink(abs);
-      }
-    },
-    true
-  );
-
-  // 拦截 JS 中的 window.open → 统一打开方式
-  window.open = ((_url?: string | URL, _target?: string, _features?: string) => {
-    const u = typeof _url === "string" ? _url : _url instanceof URL ? _url.href : "";
-    if (u) openLink(u);
-    return null;
-  }) as typeof window.open;
-
-  // ===== 历史记录面板 =====
-  const histPanel = $("history-panel");
-  const histList = $("history-list") as HTMLElement;
-  const refreshHistory = (): void =>
-    renderHistoryList(histList, (item) => {
-      tabManager.addTab("web", item.url);
-      histPanel.hidden = true;
-    });
-  $("url-history").addEventListener("click", (e) => {
-    e.stopPropagation();
-    histPanel.hidden = !histPanel.hidden;
-    if (!histPanel.hidden) refreshHistory();
-  });
-  $("history-close").addEventListener("click", () => {
-    histPanel.hidden = true;
-  });
-  $("history-clear").addEventListener("click", () => {
-    clearHistory();
-    refreshHistory();
-  });
-  document.addEventListener("click", (ev) => {
-    if (histPanel.hidden) return;
-    if (histPanel.contains(ev.target as Node) || ev.target === $("url-history")) return;
-    histPanel.hidden = true;
-  });
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));
   $("url-home").addEventListener("click", () => tabManager.addTab("blank"));
