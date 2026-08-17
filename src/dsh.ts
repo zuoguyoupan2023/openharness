@@ -16,6 +16,7 @@ type Listener<T> = (payload: T) => void;
 const logListeners: Listener<string>[] = [];
 const readyListeners: Listener<string>[] = [];
 const exitListeners: Listener<void>[] = [];
+const updateCheckListeners: Listener<DshUpdateCheck>[] = [];
 
 export function onLog(fn: Listener<string>): void {
   logListeners.push(fn);
@@ -25,6 +26,29 @@ export function onReady(fn: Listener<string>): void {
 }
 export function onExit(fn: Listener<void>): void {
   exitListeners.push(fn);
+}
+/** 后台更新检查结果事件（spawn_dsh 后 3 秒推送一次；是否提示由调用方 semver 判断） */
+export function onUpdateCheck(fn: Listener<DshUpdateCheck>): void {
+  updateCheckListeners.push(fn);
+}
+
+/** semver 比较（含预发布）：a > b 返回 1；a < b 返回 -1；相等返回 0。
+ *  先比 base 三段数字；base 相等时正式版 > 预发布（0.1.0 > 0.1.0-rc.6）。 */
+export function cmpSemver(a: string, b: string): number {
+  const preA = a.split("+")[0].split("-");
+  const preB = b.split("+")[0].split("-");
+  const baseA = preA[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const baseB = preB[0].split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(baseA.length, baseB.length); i++) {
+    const d = (baseA[i] || 0) - (baseB[i] || 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  const ra = preA.length > 1 ? preA[1] : "";
+  const rb = preB.length > 1 ? preB[1] : "";
+  if (ra === rb) return 0;
+  if (ra === "") return 1; // 正式版 > 预发布
+  if (rb === "") return -1;
+  return ra < rb ? -1 : 1;
 }
 
 let initialized = false;
@@ -36,6 +60,9 @@ export async function initDsh(): Promise<void> {
   await listen<string>("dsh-log", (e) => logListeners.forEach((f) => f(e.payload)));
   await listen<string>("dsh-ready", (e) => readyListeners.forEach((f) => f(e.payload)));
   await listen<void>("dsh-exit", () => exitListeners.forEach((f) => f()));
+  await listen<DshUpdateCheck>("dsh-update-check", (e) =>
+    updateCheckListeners.forEach((f) => f(e.payload))
+  );
   await listen<TermOutput>("term-output", (e) =>
     termOutputListeners.forEach((f) => f(e.payload))
   );
@@ -74,9 +101,29 @@ export interface DshVersionInfo {
   updateMode: string;
 }
 
+/** 后台更新检查结果（spawn_dsh 后 3 秒后端推送一次，事件 `dsh-update-check`） */
+export interface DshUpdateCheck {
+  /** 上次 spawn 记录的实际使用版本（无记录为 null） */
+  current: string | null;
+  /** registry 最新版本（查询失败为 null） */
+  latest: string | null;
+  /** 更新模式：auto / manual */
+  updateMode: string;
+}
+
 /** 版本信息：当前使用 / 最新 / 锁定 / 更新模式（设置页「DSH 更新」卡片） */
 export function getDshVersionInfo(): Promise<DshVersionInfo> {
   return invoke<DshVersionInfo>("dsh_version_info");
+}
+
+/** 手动触发一次更新检查（设置页「重新检查」；结果事件 `dsh-update-check` 会推给全局 banner） */
+export function checkDshUpdateNow(): Promise<DshUpdateCheck | null> {
+  return invoke<DshUpdateCheck | null>("check_dsh_update_now");
+}
+
+/** 预下载指定 DSH 版本到 npx 缓存（不启动服务；下载/校验失败抛错，正在运行的版本不受影响） */
+export function predownloadDshVersion(version: string): Promise<string> {
+  return invoke<string>("predownload_dsh_version", { version });
 }
 
 /** 锁定 / 解锁 DSH 版本：传版本号锁定；传 null 解锁（跟随最新）。改动需重启 DSH 生效。 */

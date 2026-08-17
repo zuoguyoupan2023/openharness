@@ -5,6 +5,9 @@ import {
   onReady,
   onExit,
   startDsh,
+  restartDsh,
+  onUpdateCheck,
+  cmpSemver,
   termSpawn,
   termWrite,
   termResize,
@@ -32,6 +35,7 @@ import { mountIcons, iconSvg } from "./icons";
 import { initLang, setLang, getLang, t } from "./i18n";
 import { initTheme, cycleTheme, effectiveTheme, getThemePref } from "./theme";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { startDshSettingsSync, pushPref } from "./dsh-settings";
 import { registerLinkOpener, openLink } from "./open-link";
@@ -340,6 +344,47 @@ function showNodeWizard(initialMsg: string): void {
   }
 }
 
+// ===== DSH 更新提示（D2：后台检测 → 弹窗 → 确定重启 / 稍后忽略；不自动打扰） =====
+// 「稍后」= 持久化忽略该版本（localStorage），不再提醒；用户任务结束后自行重启即生效。
+const UPDATE_IGNORE_KEY = "dsh-update-ignored";
+let updateDialogOpen = false;
+
+function initUpdateDialog(): void {
+  onUpdateCheck((info) => {
+    if (updateDialogOpen) return; // 弹窗已打开期间不重复弹
+    if (info.updateMode !== "auto") return; // manual 不提示（后端已过滤，双保险）
+    const latest = info.latest;
+    const current = info.current;
+    if (!latest || !current) return;
+    if (cmpSemver(current, latest) >= 0) return; // 已是最新（含重启 DSH 后自然消隐）
+    if (localStorage.getItem(UPDATE_IGNORE_KEY) === latest) return; // 已忽略该版本
+    updateDialogOpen = true;
+    void (async () => {
+      try {
+        const ok = await confirm(
+          t("dshUpdate.dialogBody", { latest, current }),
+          {
+            title: t("dshUpdate.dialogTitle"),
+            kind: "info",
+            okLabel: t("dshUpdate.dialogOk"),
+            cancelLabel: t("dshUpdate.dialogLater"),
+          }
+        );
+        if (ok) {
+          appendLog(t("dshUpdate.restarting"));
+          await restartDsh().catch((e) => appendLog(t("app.startErr") + String(e)));
+        } else {
+          // 稍后：持久化忽略该版本，不再提醒；用户自行重启后记录刷新、自然升级
+          localStorage.setItem(UPDATE_IGNORE_KEY, latest);
+          appendLog(t("dshUpdate.ignored", { latest }));
+        }
+      } finally {
+        updateDialogOpen = false;
+      }
+    })();
+  });
+}
+
 async function boot(): Promise<void> {
   // ===== 初始化：图标（lucide 内联 SVG）/ 语言 / 主题 =====
   mountIcons();
@@ -357,6 +402,7 @@ async function boot(): Promise<void> {
   });
 
   await initDsh();
+  initUpdateDialog();
   onLog(appendLog);
 
   // ===== 多标签页 =====

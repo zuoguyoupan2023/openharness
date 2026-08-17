@@ -15,6 +15,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "unstable"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
+# 更新流程：确定后重启整个 app（relaunch）
+tauri-plugin-process = "2"
+# 单实例：多实例会并发抢 3080 / 互删 npm 私有缓存（ECOMPROMISED 与 JSON.parse 空文件的根源）
+tauri-plugin-single-instance = "2"
 # 本地 dsh 插件安装：原生文件/目录选择对话框（选 .tgz 或插件目录）
 # 注意：依赖树要求 rustc ≥ 1.88，需用 rustup 的 stable（本机 1.97）而非 Homebrew rustc 1.86。
 tauri-plugin-dialog = "2"

@@ -1,5 +1,7 @@
 // src/settings.ts —— 设置视图（npm 镜像源、Node 环境、DSH 生命周期、外观、语言、DSH 更新、默认标签页）
-import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode, DSH_URL } from "./dsh";
+import { restartDsh, getDshVersionInfo, setDshVersionLock, setDshUpdateMode, checkDshUpdateNow, predownloadDshVersion, cmpSemver, DSH_URL } from "./dsh";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { getSettings, setRegistry, setCloseWithApp, setDefaultTabs, setRestoreSession, setDownloadDir, getDownloadDir, NPM_MIRROR } from "./config";
 import { t, setLang, getLang } from "./i18n";
 import { setThemePref, getThemePref, ThemePref } from "./theme";
@@ -190,24 +192,6 @@ export function initSettings(): void {
   const versionSaved = document.getElementById("version-saved") as HTMLSpanElement | null;
   const modeRadios = document.getElementsByName("dsh-update-mode") as NodeListOf<HTMLInputElement>;
 
-  // semver 比较（含预发布）：先比 base 三段数字；base 相等时正式版 > 预发布（0.1.0 > 0.1.0-rc.6）
-  const cmpSemver = (a: string, b: string): number => {
-    const preA = a.split("+")[0].split("-");
-    const preB = b.split("+")[0].split("-");
-    const baseA = preA[0].split(".").map((n) => parseInt(n, 10) || 0);
-    const baseB = preB[0].split(".").map((n) => parseInt(n, 10) || 0);
-    for (let i = 0; i < Math.max(baseA.length, baseB.length); i++) {
-      const d = (baseA[i] || 0) - (baseB[i] || 0);
-      if (d !== 0) return d > 0 ? 1 : -1;
-    }
-    const ra = preA.length > 1 ? preA[1] : "";
-    const rb = preB.length > 1 ? preB[1] : "";
-    if (ra === rb) return 0;
-    if (ra === "") return 1; // 正式版 > 预发布
-    if (rb === "") return -1;
-    return ra < rb ? -1 : 1;
-  };
-
   const verSet = (
     el: HTMLElement | null,
     val: string,
@@ -341,18 +325,41 @@ export function initSettings(): void {
         return;
       }
       try {
+        // ① 锁定新版本（即使不立即重启，下次启动也会用新版）
         await setDshVersionLock(latest);
-        verMsg(t("settings.version.updating", { latest }));
-        await restartDsh();
-        verMsg(t("settings.version.updated", { latest }));
+        // ② 预下载 + 完整性校验：失败时正在运行的旧版本不受影响
+        verMsg(t("settings.version.downloading", { latest }));
+        const downloaded = await predownloadDshVersion(latest);
+        verMsg("");
+        // ③ 下载完成 → 弹窗：确定 = 立即重启整个 app；稍后 = 版本已锁定，重启后生效
+        const ok = await confirm(
+          t("settings.version.readyBody", { latest: downloaded || latest }),
+          {
+            title: t("settings.version.readyTitle"),
+            kind: "info",
+            okLabel: t("settings.version.readyOk"),
+            cancelLabel: t("settings.version.readyLater"),
+          }
+        );
+        if (ok) {
+          // ④ 确定 → 重启整个 app（DSH 随 app 重启并加载新版本）
+          await relaunch();
+        } else {
+          // ⑤ 稍后 → 不重启（避免打断当前任务）；版本已锁定，下次启动/手动重启即生效
+          verMsg(t("settings.version.readyLaterSaved", { latest: downloaded || latest }));
+        }
       } catch (e) {
-        verMsg(t("settings.version.errSave") + String(e));
+        verMsg(t("settings.version.errDownload") + String(e));
       }
       void loadVersionInfo();
     });
   }
   if (versionRefreshBtn) {
-    versionRefreshBtn.addEventListener("click", () => void loadVersionInfo());
+    versionRefreshBtn.addEventListener("click", () => {
+      void loadVersionInfo();
+      // 同时触发一次后台检查：结果事件 dsh-update-check 会让全局 banner 显示新版本提示
+      void checkDshUpdateNow();
+    });
   }
   // 初始化：恢复上次选择的更新模式 + 异步加载版本信息
   void getSettings().then((s) => {

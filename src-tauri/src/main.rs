@@ -4,8 +4,9 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::Arc;
 
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
@@ -125,7 +126,13 @@ struct DshPid(Mutex<Option<u32>>);
 /// DSH 子进程 stdin 句柄，供前端「嵌入式终端面板」写入（终端输入 → 子进程 stdin）
 /// 用 tokio::sync::Mutex：write_stdin 需要在持有锁的同时跨 await 写 stdin
 /// （std MutexGuard 非 Send，无法满足 Tauri async 命令的 Send 约束）。
-struct DshStdin(tokio::sync::Mutex<Option<tokio::process::ChildStdin>>);
+struct DshStdin(Arc<tokio::sync::Mutex<Option<tokio::process::ChildStdin>>>);
+
+/// D5-加固：全局 npm 操作互斥锁。
+/// 根因（022 事故）：多个 npm/npx/pnpm 子进程并发写同一缓存目录（即使私有化后也是同一目录）
+/// → 中断/竞争写坏 → ECOMPROMISED / 残缺 _npx。所有子进程入口持锁执行，彻底串行化；
+/// DSH 主 spawn 改为「先预热下载(占锁) → 再启动 web(缓存命中)」，把下载移出长驻进程，消除并发窗口。
+struct NpmOpLock(Arc<tokio::sync::Mutex<()>>);
 
 /// 一个独立的 shell 终端（用户通过「+」新增，跑本机默认 shell）。
 /// 底层是真实 PTY（portable-pty）：writer 用于 term_write 写主设备（-> 子进程输入）、
@@ -335,10 +342,14 @@ fn extract_version(text: &str) -> Option<String> {
 
 /// 查询 registry 上 @deepseek-ai/dsh 的最新版本（走用户配置的 npm 镜像）
 async fn dsh_latest_version(app: &AppHandle) -> Option<String> {
+    // 全局 npm 互斥：避免与其它 npx/pnpm 子进程并发写同一私有缓存
+    let _lock = app.state::<NpmOpLock>().0.clone();
+    let _guard = _lock.lock().await;
     let mut cmd = tokio::process::Command::new(resolve_npm(app));
     cmd.args(["view", "@deepseek-ai/dsh", "version"]);
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
+    apply_npm_cache_env(&mut cmd, app);
     let out = run_capture_timeout(&mut cmd, 20).await?;
     let trimmed = out.trim().trim_matches('"').trim().to_string();
     (!trimmed.is_empty()).then_some(trimmed)
@@ -347,12 +358,15 @@ async fn dsh_latest_version(app: &AppHandle) -> Option<String> {
 /// 当前实际使用（下次启动将使用）的 DSH 版本：
 /// 手动模式且已锁定 → 查询锁定版本本身；否则 → 查询 npx 解析的最新版。
 async fn dsh_current_version(app: &AppHandle) -> Option<String> {
+    let _lock = app.state::<NpmOpLock>().0.clone();
+    let _guard = _lock.lock().await;
     let s = load_settings(app);
     let pkg = dsh_effective_pkg(&s);
     let mut cmd = tokio::process::Command::new(resolve_npx(app));
     cmd.arg("--yes").arg(&pkg).arg("--version");
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
+    apply_npm_cache_env(&mut cmd, app);
     let out = run_capture_timeout(&mut cmd, 90).await?;
     extract_version(&out)
 }
@@ -382,6 +396,156 @@ async fn dsh_version_info(app: AppHandle) -> DshVersionInfo {
         locked,
         update_mode: s.dsh_update_mode,
     }
+}
+
+// ===== DSH 运行版本记录 + 后台更新检查（D1：检测 → 推送，只提示不自动更新） =====
+// 背景：DSH 不暴露版本 API（web 首页只有构建 rev、源码无版本端点、~/.dsh 无版本文件），
+// 无法从运行中进程直接问出版本。壳在每次成功 spawn 时记录本次解析到的版本，
+// 后台检查时拿它对比 registry 最新版，仅将结果推送给前端，由前端 semver 比较决定是否提示。
+
+fn dsh_version_record_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("❌ 无法获取应用数据目录: {}", e))?;
+    Ok(dir.join("dsh-version.json"))
+}
+
+/// 记录本次 spawn 实际使用的 DSH 版本（原子写：临时文件 + rename，避免中断写坏）
+fn save_dsh_spawned_version(app: &AppHandle, version: &str) {
+    let Ok(p) = dsh_version_record_path(app) else {
+        return;
+    };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let json = serde_json::json!({
+        "version": version,
+        "updatedAt": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    });
+    let tmp = p.with_extension("json.tmp");
+    if std::fs::write(&tmp, serde_json::to_string_pretty(&json).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, &p);
+    }
+}
+
+/// 读取上次 spawn 记录的 DSH 版本（缺失/损坏返回 None）
+fn load_dsh_spawned_version(app: &AppHandle) -> Option<String> {
+    let p = dsh_version_record_path(app).ok()?;
+    let text = std::fs::read_to_string(p).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("version")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string())
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DshUpdateCheck {
+    /// 上次 spawn 记录的实际使用版本（无记录为 null）
+    current: Option<String>,
+    /// registry 最新版本（查询失败为 null）
+    latest: Option<String>,
+    /// 更新模式：auto / manual
+    update_mode: String,
+}
+
+/// 生成一次检查结果（读记录 + 查 registry；manual 模式返回 None = 不检查）
+async fn produce_dsh_update_check(app: &AppHandle) -> Option<DshUpdateCheck> {
+    let s = load_settings(app);
+    if update_mode_manual(&s) {
+        return None; // manual 模式：用户已主动锁定版本，不提示
+    }
+    let current = load_dsh_spawned_version(app);
+    let latest = dsh_latest_version(app).await;
+    Some(DshUpdateCheck {
+        current,
+        latest,
+        update_mode: s.dsh_update_mode,
+    })
+}
+
+/// 后台检查 DSH 更新：仅 auto 模式 - 有记录时推送一次检查结果；
+/// 是否「有更新」由前端 semver 比较决定（后端不引入 semver 依赖）。
+/// 失败静默：断网 / 无记录 / manual 模式均不打扰。
+async fn check_dsh_update(app: AppHandle) {
+    if let Some(c) = produce_dsh_update_check(&app).await {
+        let _ = app.emit("dsh-update-check", c);
+    }
+}
+
+/// 手动触发一次更新检查（设置页「重新检查」按钮；结果事件推送给全局 banner）
+#[tauri::command]
+async fn check_dsh_update_now(app: AppHandle) -> Option<DshUpdateCheck> {
+    let c = produce_dsh_update_check(&app).await?;
+    let _ = app.emit("dsh-update-check", c.clone());
+    Some(c)
+}
+
+/// 预下载指定 DSH 版本到 npx 缓存（不启动服务，只跑 `--version` 完成下载+完整性校验）。
+/// 用途：「更新到最新版」先验证下载可成功，之后才提示重启；失败时正在运行的旧版本不受影响。
+/// 超时 10 分钟（DSH 依赖树很大，官方源可能很慢）。
+/// D4：命中缓存类错误时清私有缓存自动重试一次。
+#[tauri::command]
+async fn predownload_dsh_version(app: AppHandle, version: String) -> Result<String, String> {
+    let ver = version.trim().to_string();
+    if ver.is_empty() {
+        return Err("❌ 版本号为空".into());
+    }
+    // 全局 npm 互斥：整个预下载（含清理重试）期间独占缓存，避免与其它 npx 并发写坏
+    let _lock = app.state::<NpmOpLock>().0.clone();
+    let _guard = _lock.lock().await;
+    let mut attempt = 0;
+    loop {
+        match run_predownload(&app, &ver).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if attempt == 0 && is_npm_cache_error(&e) {
+                    attempt += 1;
+                    let _ = app.emit("dsh-log", "🧹 下载命中缓存损坏（ECOMPROMISED/ENOENT），清理后自动重试…");
+                    clear_app_npm_cache(&app);
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+async fn run_predownload(app: &AppHandle, ver: &str) -> Result<String, String> {
+    prewarm_dsh(app, &format!("@deepseek-ai/dsh@{}", ver)).await
+}
+
+/// D5-加固：spawn 前预热——先运行 `npx --yes <pkg> --version` 完成下载与完整性校验，
+/// 使随后的 `web` 启动直接命中缓存、不再大文件写入。
+/// **调用方必须已持有全局 npm 互斥锁（NpmOpLock）**,确保与其它 npx/pnpm 子进程串行。
+async fn prewarm_dsh(app: &AppHandle, pkg: &str) -> Result<String, String> {
+    let mut cmd = tokio::process::Command::new(resolve_npx(app));
+    cmd.arg("--yes").arg(pkg).arg("--version");
+    apply_registry_env(&mut cmd, app);
+    apply_node_env(&mut cmd, app);
+    apply_npm_cache_env(&mut cmd, app);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("❌ 启动 npx 预热失败: {}", e))?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(600), child.wait_with_output())
+        .await
+        .map_err(|_| {
+            "⏱ DSH 下载超时（10 分钟）。网络较慢或源不可达，可稍后重试；\n建议在设置页把 npm 源切换为镜像源（registry.npmmirror.com）".to_string()
+        })?
+        .map_err(|e| format!("❌ 预热子进程执行失败: {}", e))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err: String = err.trim_end().chars().take(500).collect();
+        return Err(format!("❌ DSH 下载/校验失败: {}", err));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(extract_version(&stdout).unwrap_or_default())
 }
 
 /// 锁定 / 解锁 DSH 版本：Some("x.y.z") 锁定；None 解锁（跟随最新）。
@@ -929,6 +1093,52 @@ fn apply_registry_env(cmd: &mut Command, app: &AppHandle) {
             .env("NPM_CONFIG_REGISTRY", &s.registry);
     }
 }
+
+// ============================ D3:npm 私有缓存隔离 + D4:失败自愈 ============================
+// 根因（022）：app 与用户终端共用 ~/.npm 缓存，中断/并发写入会污染共享缓存，导致
+// ECOMPROMISED / Lock compromised / 残缺 _npx 目录（ENOENT: could not read package.json）。
+// D3：为一切 npm/npx/pnpm 子进程注入私有缓存目录（app_data_dir/npm-cache）；
+//     注意 npm 没有单独的 npx cache 配置项 —— npx 的 `_npx` 是 `$npm_config_cache/_npx` 子目录，
+//     设置 npm_config_cache 即一并隔离。
+// D4：子进程失败且日志命中缓存类错误时，清空私有缓存并自动重试一次。
+
+/// 向子进程注入私有 npm 缓存目录（D3）
+fn apply_npm_cache_env(cmd: &mut Command, app: &AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let cache = dir.join("npm-cache");
+        if std::fs::create_dir_all(&cache).is_ok() {
+            cmd.env("npm_config_cache", &cache)
+                .env("NPM_CONFIG_CACHE", &cache);
+        }
+    }
+}
+
+/// 判断失败输出是否命中 npm 缓存完整性/残缺类错误（D4 触发条件）
+fn is_npm_cache_error(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "ecompromised",
+        "lock compromised",
+        "integrity",
+        "enoent",
+        "could not read package.json",
+    ]
+    .iter()
+    .any(|k| lower.contains(k))
+}
+
+/// 清空 app 私有 npm 缓存目录（D4 失败自愈的第一步）
+fn clear_app_npm_cache(app: &AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let cache = dir.join("npm-cache");
+        let _ = std::fs::remove_dir_all(&cache);
+        let _ = app.emit("dsh-log", "🧹 已清理私有 npm 缓存");
+    }
+}
+
+/// D4 重试标记：同一次「用户触发的启动」最多自动重试 1 次，避免死循环。
+/// 在 start_dsh / restart_dsh 入口处重置，重试内部不再重置。
+static NPM_CACHE_RETRIED: AtomicBool = AtomicBool::new(false);
 
 // ============================ Node.js 环境（检测 / 安装 / 内置优先） ============================
 // 背景：DSH 依赖系统 Node/npx（>=22.15，node:zlib zstd）。macOS 上从 Finder 启动的 GUI 应用 PATH 只有
@@ -1631,6 +1841,9 @@ fn ensure_pnpm_root_add_compat() -> bool {
 
 /// 执行任意 dsh CLI 命令（stdout/stderr 实时推送到日志视图），内部实现
 async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String> {
+    // 全局 npm 互斥：插件安装/移除等 dsh 命令内部也会跑 pnpm/npm，串行执行避免并发写缓存
+    let _lock = app.state::<NpmOpLock>().0.clone();
+    let _guard = _lock.lock().await;
     let mut cmd = Command::new(resolve_npx(app));
     let pkg = dsh_pkg_arg(app);
     cmd.arg("--yes").arg(&pkg).args(args);
@@ -1642,6 +1855,7 @@ async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String>
     }
     apply_registry_env(&mut cmd, app);
     apply_node_env(&mut cmd, app);
+    apply_npm_cache_env(&mut cmd, app);
     // 插件管理命令需要 pnpm workspace-root 兼容：优先写 profile .npmrc；
     // 写入失败（如只读环境）则注入环境变量兜底（pnpm 亦读取 npm_config_* 配置）
     if !ensure_pnpm_root_add_compat() {
@@ -1684,7 +1898,7 @@ async fn run_dsh_cmd_inner(app: &AppHandle, args: &[&str]) -> Result<(), String>
 }
 
 /// spawn `npx @deepseek-ai/dsh web`：日志写文件、尾部跟踪、就绪检测、退出监听
-async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
+async fn spawn_dsh(app: AppHandle) -> Result<(), String> {
     // 子进程日志写入文件而非管道：app 被强杀/重启时管道会断，DSH 写日志会 EPIPE 崩溃
     let seq = LOG_SEQ.fetch_add(1, Ordering::Relaxed);
     let log_path = std::env::temp_dir().join(format!("openharness-dsh-{}.log", seq));
@@ -1697,8 +1911,36 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         .try_clone()
         .map_err(|e| format!("❌ 无法复制日志句柄: {}", e))?;
 
-    let mut cmd = Command::new(resolve_npx(app));
-    let pkg = dsh_pkg_arg(app);
+    // D5-加固：spawn 前预热下载（持全局 npm 互斥锁，独占缓存）。
+    // 根因：多个 npm/npx 并发写同一缓存目录 → ECOMPROMISED / 残缺 _npx。
+    // 把 DSH 的下载从「长驻 web 进程内」移到此处独占执行，之后启动 web 直接命中缓存、
+    // 不再产生大文件写入，彻底消除并发窗口。
+    let pkg = dsh_pkg_arg(&app);
+    {
+        let _lock = app.state::<NpmOpLock>().0.clone();
+        let _guard = _lock.lock().await;
+        // 预热 + D4 自愈(命中缓存损坏 → 清缓存重试一次)
+        let prewarm_result = match prewarm_dsh(&app, &pkg).await {
+            Ok(_) => Ok(()),
+            Err(e) if is_npm_cache_error(&e) => {
+                let _ = app.emit(
+                    "dsh-log",
+                    "🧹 预热命中缓存损坏（ECOMPROMISED/ENOENT），清理缓存后自动重试…",
+                );
+                clear_app_npm_cache(&app);
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                match prewarm_dsh(&app, &pkg).await {
+                    Ok(_) => Ok(()),
+                    Err(e2) => Err(e2),
+                }
+            }
+            Err(e) => Err(e),
+        };
+        prewarm_result?;
+        let _ = app.emit("dsh-log", "📦 DSH 依赖已就绪，正在启动 web…");
+    } // 释放互斥锁，再启动 web
+
+    let mut cmd = Command::new(resolve_npx(&app));
     cmd.arg("--yes").arg(&pkg).arg("web");
     if pkg != "@deepseek-ai/dsh" {
         let _ = app.emit(
@@ -1706,8 +1948,9 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
             format!("🔒 DSH 版本已锁定：{}（解锁可在「设置 → DSH 运行时版本」操作）", pkg),
         );
     }
-    apply_registry_env(&mut cmd, app);
-    apply_node_env(&mut cmd, app);
+    apply_registry_env(&mut cmd, &app);
+    apply_node_env(&mut cmd, &app);
+    apply_npm_cache_env(&mut cmd, &app);
     cmd.stdout(Stdio::from(log_file)).stderr(Stdio::from(log_file2));
     // stdin 改为 piped：嵌入式终端面板通过 write_stdin 写入子进程 stdin
     cmd.stdin(Stdio::piped());
@@ -1724,15 +1967,50 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     }
 
     // 暂存 stdin 句柄，供 write_stdin 命令写入（Child 不 drop，句柄保持打开）
-    *app.state::<DshStdin>().0.lock().await = child.stdin.take();
+    // 注意：先取出 stdin 值再 await，避免语句级跨 await 借用 child（否则 spawn future 非 Send）
+    let child_stdin = child.stdin.take();
+    let stdin_arc = app.state::<DshStdin>().0.clone();
+    *stdin_arc.lock().await = child_stdin;
 
     // 监听子进程退出
     let app_clone = app.clone();
+    let log_clone = log_path.clone();
     tokio::spawn(async move {
         let _ = child.wait().await;
         *app_clone.state::<DshPid>().0.lock().unwrap() = None;
-        let _ = app_clone.state::<DshStdin>().0.lock().await.take();
+        let stdin_arc = app_clone.state::<DshStdin>().0.clone();
+        let _ = stdin_arc.lock().await.take();
         let _ = app_clone.emit("dsh-exit", ());
+
+        // D4：退出日志命中 npm 缓存类错误（ECOMPROMISED/ENOENT）→ 清私有缓存 → 自动重试一次
+        // 重试标记由 start_dsh / restart_dsh 入口重置；重试内部不再重置，避免死循环。
+        if !NPM_CACHE_RETRIED.load(Ordering::Relaxed) {
+            let tail = std::fs::read_to_string(&log_clone).unwrap_or_default();
+            let tail: String = tail.chars().rev().take(4000).collect();
+            if is_npm_cache_error(&tail) {
+                NPM_CACHE_RETRIED.store(true, Ordering::Relaxed);
+                let _ = app_clone.emit(
+                    "dsh-log",
+                    "🧹 检测到 npm 缓存损坏（ECOMPROMISED/ENOENT），已清理缓存，1.5s 后自动重试…",
+                );
+                clear_app_npm_cache(&app_clone);
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                // spawn_dsh 的 future 含 Tauri State 借用（非 Send），不能在 tokio::spawn 内直接 await；
+                // 用独立线程 + tauri::async_runtime::block_on 驱动（不要求 Send，内部 tokio::spawn 挂全局 runtime）
+                let retry_app = app_clone.clone();
+                std::thread::spawn(move || {
+                    let result = tauri::async_runtime::block_on(spawn_dsh(retry_app.clone()));
+                    match result {
+                        Ok(_) => {
+                            let _ = retry_app.emit("dsh-log", "✅ 缓存清理后自动重试已启动");
+                        }
+                        Err(e) => {
+                            let _ = retry_app.emit("dsh-log", format!("❌ 自动重试仍失败：{}", e));
+                        }
+                    }
+                });
+            }
+        }
     });
 
     // 尾部跟踪日志文件，实时推送给前端
@@ -1772,6 +2050,27 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         }
     });
 
+    // D1：DSH 启动稳定后（约 3 秒），记录本次实际使用版本；auto 模式下后台检查一次更新。
+    // 记录用途：DSH 不暴露版本 API，「当前运行版本」只能由壳记录。
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        // 进程已退出（启动失败，如 ECOMPROMISED）→ 不记录、不检查
+        if app_clone.state::<DshPid>().0.lock().unwrap().is_none() {
+            return;
+        }
+        let s = load_settings(&app_clone);
+        let version = if update_mode_manual(&s) {
+            s.dsh_version_locked.clone() // manual：启动即锁定版本
+        } else {
+            dsh_latest_version(&app_clone).await // auto：registry 最新 = 本次 npx 解析的版本
+        };
+        if let Some(v) = version {
+            save_dsh_spawned_version(&app_clone, &v);
+        }
+        check_dsh_update(app_clone).await;
+    });
+
     Ok(())
 }
 
@@ -1780,7 +2079,8 @@ async fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn write_stdin(app: AppHandle, chunk: String) -> Result<String, String> {
     let state = app.state::<DshStdin>();
-    let mut guard = state.0.lock().await;
+    let stdin_arc = state.0.clone();
+    let mut guard = stdin_arc.lock().await;
     let Some(mut stdin) = guard.take() else {
         return Ok(String::new());
     };
@@ -2471,6 +2771,8 @@ async fn resolve_final_url(url: String) -> String {
 /// 启动 DSH：若 3080 已在运行则直接连接；否则先预装插件，再 spawn dsh web
 #[tauri::command]
 async fn start_dsh(app: AppHandle) -> Result<String, String> {
+    // D4：每次用户触发启动重置缓存重试标记（重试内部不再重置，避免死循环）
+    NPM_CACHE_RETRIED.store(false, Ordering::Relaxed);
     // 3080 已在服务（上次残留实例 / 手动启动的 DSH）→ 直接连接，避免重复启动冲突
     if dsh_already_running().await {
         // 接管现有实例：记录监听 PID，退出时（若设置开启）一并回收，避免孤儿残留
@@ -2517,13 +2819,15 @@ async fn start_dsh(app: AppHandle) -> Result<String, String> {
         let _ = app.emit("dsh-log", format!("✅ 预装插件 {} 完成", pkg));
     }
 
-    spawn_dsh(&app).await?;
+    spawn_dsh(app.clone()).await?;
     Ok("🚀 DSH 正在启动，请稍候...".into())
 }
 
 /// 重启 DSH：强制回收 3080（含接管的外部实例）→ 等待端口释放 → 重新 spawn（插件装/卸/更后生效）
 #[tauri::command]
 async fn restart_dsh(app: AppHandle) -> Result<String, String> {
+    // D4：每次用户触发重启重置缓存重试标记
+    NPM_CACHE_RETRIED.store(false, Ordering::Relaxed);
     kill_3080(&app);
     // 等待旧实例释放 3080，避免误判「已在运行」而跳过启动
     for _ in 0..25 {
@@ -2532,7 +2836,7 @@ async fn restart_dsh(app: AppHandle) -> Result<String, String> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    spawn_dsh(&app).await?;
+    spawn_dsh(app.clone()).await?;
     Ok("🔄 DSH 已重启".into())
 }
 
@@ -2638,12 +2942,21 @@ fn kill_all_shells(app: &AppHandle) {
 fn main() {
     tauri::Builder::default()
         .manage(DshPid(Mutex::new(None)))
-        .manage(DshStdin(tokio::sync::Mutex::new(None)))
+        .manage(DshStdin(Arc::new(tokio::sync::Mutex::new(None))))
+        .manage(NpmOpLock(Arc::new(tokio::sync::Mutex::new(()))))
         .manage(Shells(tokio::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(WebviewRegistry(Mutex::new(HashMap::new())))
         .manage(NodeBusy(Mutex::new(false)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        // 单实例：重复启动时聚焦已有窗口并退出新实例
+        //（多实例并发会抢 3080 端口、互删 npm 私有缓存 → ECOMPROMISED / 空 package.json）
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_focus();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             start_dsh,
             restart_dsh,
@@ -2662,6 +2975,8 @@ fn main() {
             set_registry,
             set_close_with_app,
             dsh_version_info,
+            check_dsh_update_now,
+            predownload_dsh_version,
             set_dsh_version_lock,
             set_dsh_update_mode,
             set_default_tabs,

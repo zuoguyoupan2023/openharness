@@ -374,6 +374,18 @@ const DICT: Record<string, Entry> = {
   "settings.dsh.restarted": { zh: "✓ DSH 已重启", en: "DSH restarted" },
 
   // ===== DSH 更新（更新模式 / 版本检查） =====
+  // ===== DSH 更新提示（D2：后台检测 → 弹窗 → 确定重启 / 稍后忽略） =====
+  "dshUpdate.dialogTitle": { zh: "发现 DSH 新版本", en: "New DSH version available" },
+  "dshUpdate.dialogBody": {
+    zh: "发现 DSH 新版本 v{latest}（当前 v{current}）。\n立即重启 DSH 使用新版吗？稍后将在您下次重启时生效。",
+    en: "New DSH version v{latest} is available (current: v{current}).\nRestart DSH now to use it? Choosing Later will apply it on your next restart.",
+  },
+  "dshUpdate.dialogOk": { zh: "立即重启", en: "Restart now" },
+  "dshUpdate.dialogLater": { zh: "稍后", en: "Later" },
+  "dshUpdate.restarting": { zh: "正在重启 DSH 以应用新版本…", en: "Restarting DSH to apply the new version…" },
+  "dshUpdate.ignored": { zh: "已选择稍后：v{latest} 将在您下次重启时生效（本次不再提醒）", en: "Later: v{latest} will apply on your next restart (no more prompts for this version)" },
+
+  // ===== 设置页（settings.ts） =====
   "settings.version.title": { zh: "DSH 更新", en: "DSH updates" },
   "settings.version.desc": {
     zh: "自动更新：每次启动 DSH 自动使用最新稳定版本；手动更新：固定当前使用版本，点击「更新到最新版」才升级（重启 DSH 后生效）。",
@@ -395,6 +407,19 @@ const DICT: Record<string, Entry> = {
   "settings.version.modeManualSaved": { zh: "✓ 已切换到手动更新：锁定当前版本 v{v}", en: "Manual updates enabled — locked to v{v}" },
   "settings.version.updating": { zh: "正在更新到 v{latest} 并重启 DSH…", en: "Updating to v{latest} and restarting DSH…" },
   "settings.version.updated": { zh: "✓ 已更新到 v{latest}", en: "Updated to v{latest}" },
+  "settings.version.downloading": { zh: "正在下载 v{latest} 并校验…（首次下载较慢，请耐心等待）", en: "Downloading v{latest}… (first download can take a while)" },
+  "settings.version.readyTitle": { zh: "DSH 更新", en: "DSH update" },
+  "settings.version.readyBody": {
+    zh: "新版本 v{latest} 已就绪。需要重启应用才能生效，点击「确定」将立即重启。",
+    en: "New version v{latest} is ready. Restart is required to apply it; click OK to restart now.",
+  },
+  "settings.version.readyOk": { zh: "确定", en: "OK" },
+  "settings.version.readyLater": { zh: "稍后", en: "Later" },
+  "settings.version.readyLaterSaved": {
+    zh: "已选择稍后重启：v{latest} 已锁定，重启应用后生效",
+    en: "Restart later: v{latest} locked; applies after the app restarts",
+  },
+  "settings.version.errDownload": { zh: "下载失败：", en: "Download failed: " },
   "settings.version.errSave": { zh: "⚠️ 保存失败：", en: "Save failed: " },
 
   // ===== 默认打开标签页（默认标签 + 恢复会话） =====
