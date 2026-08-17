@@ -38,13 +38,14 @@ const OFFICIAL_PKGS: Array<{ name: string; descKey: string }> = [
   { name: "@deepseek-ai/dsh-llm-deepseek", descKey: "plugins.official.llm" },
 ];
 
-/** npm registry 元数据（详情页用：版本历史 / README / 依赖 / 作者） */
+/** npm registry 元数据（详情页用：版本历史 / README / 依赖 / 作者 / 仓库） */
 interface NpmMeta {
   name?: string;
   description?: string;
   author?: string | { name?: string };
   license?: string;
   readme?: string;
+  repository?: string | { url?: string; type?: string };
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
   versions?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
@@ -116,6 +117,18 @@ function formatStars(n: number | undefined): string {
   if (n === undefined || n === null) return "—";
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
+}
+
+/** npm repository 字段 → 可访问的 GitHub 首页 URL（解析 git+ / git@ / .git 等写法；无法解析返回空串） */
+function cleanRepoUrl(raw: string | undefined): string {
+  if (!raw) return "";
+  let u = raw.trim();
+  if (u.startsWith("git+")) u = u.slice(4);
+  if (u.startsWith("git@github.com:")) u = "https://github.com/" + u.slice("git@github.com:".length);
+  if (u.startsWith("ssh://git@github.com/")) u = "https://github.com/" + u.slice("ssh://git@github.com/".length);
+  if (u.startsWith("git://github.com/")) u = "https://github.com/" + u.slice("git://github.com/".length);
+  if (u.endsWith(".git")) u = u.slice(0, -4);
+  return /^https?:\/\//.test(u) ? u : "";
 }
 
 /** 带超时 + 镜像回退的 registry GET */
@@ -294,6 +307,32 @@ export function initPlugins(opts: PluginCenterOptions): void {
   filterMode = savedState.filterMode;
   sortMode = savedState.sortMode;
   filterText = savedState.filterText;
+
+  // —— P2 收藏/置顶（013 §P2：本地 pin，localStorage 单独存储，与 registry 缓存分离）——
+  const PINS_KEY = "dsh-plugins-pins";
+  const readPins = (): string[] => {
+    try {
+      const raw = localStorage.getItem(PINS_KEY);
+      const arr: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  let pins = readPins();
+  const isPinned = (pkg: string): boolean => pins.includes(pkg);
+  const togglePin = (pkg: string): void => {
+    const idx = pins.indexOf(pkg);
+    if (idx >= 0) pins.splice(idx, 1);
+    else pins.push(pkg);
+    try {
+      localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+    } catch {
+      /* localStorage 不可用时静默 */
+    }
+    renderTable(true);
+    void loadVisibleVersions();
+  };
   let snapshot: RegistrySnapshot = getSnapshot();
   let plugins: PluginEntry[] = snapshot.plugins;
   let categoriesLabels: Record<string, { zh?: string; en?: string }> = snapshot.awesome?.categories ?? {};
@@ -771,7 +810,13 @@ export function initPlugins(opts: PluginCenterOptions): void {
     if (sortMode === "stars") return [...rows].sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0));
     if (sortMode === "updated") return [...rows].sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
     if (sortMode === "name") return [...rows].sort((a, b) => a.name.localeCompare(b.name));
-    return rows;
+    // P2 收藏/置顶：默认排序时置顶项排最前（其余保持 registry/推荐名单顺序）
+    const pinnedSet = new Set(pins);
+    return [...rows].sort((a, b) => {
+      const pa = pinnedSet.has(a.pkg_name ?? pkgNameOf(a.installSpec)) ? 0 : 1;
+      const pb = pinnedSet.has(b.pkg_name ?? pkgNameOf(b.installSpec)) ? 0 : 1;
+      return pa - pb;
+    });
   }
 
   /** 详情页操作按钮（安装/更新/重新安装/卸载，P0-6 语义 + P0-3 确认） */
@@ -865,6 +910,16 @@ export function initPlugins(opts: PluginCenterOptions): void {
     html += `<div class="detail-kv"><span>${escHtml(t("plugins.detail.updated"))}</span><b>${escHtml(fmt(updated))}</b></div>`;
     html += `</div>`;
 
+    // P2 详情增强：关联链接（npm 包页 + GitHub 仓库 + Releases/Changelog）
+    const repoUrl = cleanRepoUrl(typeof meta.repository === "string" ? meta.repository : meta.repository?.url);
+    html += `<div class="detail-section"><span class="detail-section-title">${escHtml(t("plugins.detail.links"))}</span><div class="detail-links">`;
+    html += `<a class="link-chip" href="https://www.npmjs.com/package/${encodeURIComponent(pkg)}" target="_blank" rel="noopener">${iconSvg("package")} ${escHtml(t("plugins.detail.npmPage"))}</a>`;
+    if (repoUrl) {
+      html += `<a class="link-chip" href="${escHtml(repoUrl)}" target="_blank" rel="noopener">${iconSvg("github")} ${escHtml(t("plugins.detail.repository"))}</a>`;
+      html += `<a class="link-chip" href="${escHtml(repoUrl)}/releases" target="_blank" rel="noopener">${escHtml(t("plugins.detail.releases"))}</a>`;
+    }
+    html += `</div></div>`;
+
     html += `<div class="detail-section"><span class="detail-section-title">${escHtml(t("plugins.detail.versionHistory"))}</span><div class="detail-versions">`;
     if (history.length) {
       for (const [v, ts] of history.slice(0, 10)) {
@@ -902,7 +957,28 @@ export function initPlugins(opts: PluginCenterOptions): void {
     const box = document.createElement("div");
     box.className = "detail-readme";
     if (readme) {
-      box.textContent = readme;
+      // P2：README 折叠——默认折叠限高；内容不足时不显示折叠按钮并自动展开
+      box.classList.add("collapsed");
+      const textDiv = document.createElement("div");
+      textDiv.className = "detail-readme-text";
+      textDiv.textContent = readme;
+      box.appendChild(textDiv);
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "readme-toggle";
+      toggle.textContent = t("plugins.detail.readmeExpand");
+      toggle.addEventListener("click", () => {
+        const collapsed = box.classList.toggle("collapsed");
+        toggle.textContent = collapsed ? t("plugins.detail.readmeExpand") : t("plugins.detail.readmeCollapse");
+      });
+      box.appendChild(toggle);
+      window.setTimeout(() => {
+        if (!box.isConnected) return;
+        if (textDiv.scrollHeight <= 162) {
+          box.classList.remove("collapsed");
+          toggle.hidden = true;
+        }
+      }, 0);
     } else {
       box.textContent = t("plugins.detail.noReadme");
       box.classList.add("empty");
@@ -1033,10 +1109,24 @@ export function initPlugins(opts: PluginCenterOptions): void {
       body.textContent = t("plugins.detail.loading");
       void renderNpmDetail(body, pkg, detailSeq);
     } else {
+      // P2 详情增强：非 npm 条目显示说明 + GitHub repo 完整信息卡 + 仓库链接（数据来自 registry，无网络）
       const note = document.createElement("div");
       note.className = "detail-note";
       note.textContent = t("plugins.detail.nonNpm", { spec: p.installSpec });
       body.appendChild(note);
+      const card = document.createElement("div");
+      card.className = "detail-repo-card";
+      card.innerHTML = repoMetaHtml(p);
+      body.appendChild(card);
+      if (p.url) {
+        const links = document.createElement("div");
+        links.className = "detail-links";
+        const ghBase = p.url.split("#")[0].replace(/\/tree\/.+$/, "").replace(/\/blob\/.+$/, "");
+        links.innerHTML =
+          `<a class="link-chip" href="${escHtml(p.url)}" target="_blank" rel="noopener">${iconSvg("github")} ${escHtml(t("plugins.detail.repository"))}</a>` +
+          `<a class="link-chip" href="${escHtml(ghBase)}/releases" target="_blank" rel="noopener">${escHtml(t("plugins.detail.releases"))}</a>`;
+        body.appendChild(links);
+      }
     }
   }
 
@@ -1071,6 +1161,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
 
       let tagHtml = "";
       if (isRec) tagHtml = `<span class="tag recommended">${t("plugins.recommendedBadge")}</span>`;
+      if (isPinned(pkg)) tagHtml += `<span class="tag pinned">${t("plugins.pinnedTag")}</span>`; // P2 收藏置顶
       if (installedFlag) tagHtml += `<span class="tag installed">${t("plugins.installedTag")}</span>`;
       else if (npm && ver && ver !== "—") tagHtml += `<span class="tag latest">${t("plugins.latestTag")}</span>`;
       if (updatable) tagHtml += `<span class="tag update">${t("plugins.updateTag")}</span>`;
@@ -1492,12 +1583,14 @@ export function initPlugins(opts: PluginCenterOptions): void {
     return escHtml(ver);
   };
 
-  /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装；P1-6 图标按钮带 aria-label） */
+  /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装；P1-6 图标按钮带 aria-label；P2 收藏置顶） */
   function tableActionsHtmlFor(p: PluginEntry): string {
     const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
     const installedFlag = isInstalled(pkg) || isInstalled(p.name);
+    const pinned = isPinned(pkg);
+    const pinBtn = `<button class="install-btn btn-icon pin-btn${pinned ? " pinned" : ""}" data-act="pin" data-name="${escHtml(pkg)}" title="${escHtml(pinned ? t("plugins.unpin") : t("plugins.pin"))}" aria-label="${escHtml(pinned ? t("plugins.unpin") : t("plugins.pin"))}">${iconSvg("star")}</button>`;
     if (!installedFlag) {
-      return `<button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(p.installSpec)}" title="${escHtml(t("plugins.install"))}" aria-label="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
+      return `${pinBtn} <button class="install-btn btn-icon" data-act="install" data-spec="${escHtml(p.installSpec)}" title="${escHtml(t("plugins.install"))}" aria-label="${escHtml(t("plugins.install"))}">${iconSvg("download")}</button>`;
     }
     const npm = p.isNpm;
     const instSpec = installedSpecOf(pkg, p.name);
@@ -1513,7 +1606,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     } else {
       upHtml = `<button class="install-btn btn-icon" disabled title="${escHtml(t("plugins.alreadyLatest"))}" aria-label="${escHtml(t("plugins.alreadyLatest"))}">${iconSvg("check")}</button>`;
     }
-    return `${upHtml} <button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}" aria-label="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
+    return `${pinBtn} ${upHtml} <button class="install-btn btn-icon" data-act="remove" data-name="${escHtml(p.name)}" title="${escHtml(t("plugins.remove"))}" aria-label="${escHtml(t("plugins.remove"))}">${iconSvg("trash-2")}</button>`;
   }
 
   /** 绑定一行内的操作按钮（初始化渲染与版本回包增量共用） */
@@ -1525,6 +1618,8 @@ export function initPlugins(opts: PluginCenterOptions): void {
         const act = b.dataset.act;
         if (act === "install") {
           enqueueAction([{ label: `${t("plugins.install")} ${b.dataset.spec}`, cmd: ["plugin", "--profile", "web", "add", b.dataset.spec!] }]);
+        } else if (act === "pin") {
+          togglePin(b.dataset.name || pkg);
         } else if (act === "update") {
           const cmd = (b.dataset.cmd || "").split("|");
           const args = cmd.length >= 2 ? cmd : ["plugin", "--profile", "web", "update", b.dataset.spec!];
@@ -2033,6 +2128,233 @@ export function initPlugins(opts: PluginCenterOptions): void {
     });
   }
 
+  // ===== P2 ⌘K 命令面板（013 §P2：一个输入框同时搜 GitHub registry / npm / 本地路径 / 常用动作） =====
+  const palEl = document.getElementById("cmd-palette");
+  const palInput = document.getElementById("cmd-palette-input") as HTMLInputElement | null;
+  const palList = document.getElementById("cmd-palette-list");
+  let palTimer = 0;
+  let palHighlight = -1;
+  interface PalItem {
+    kind: "goto-github" | "goto-npm" | "goto-local" | "official" | "refresh" | "update-all" | "entry" | "npm" | "path";
+    title: string;
+    desc?: string;
+    icon?: string;
+    tag?: string;
+    pkg?: string;
+    path?: string;
+    entry?: PluginEntry;
+  }
+  let palItems: PalItem[] = [];
+
+  const closePalette = (): void => {
+    if (palEl) palEl.hidden = true;
+    window.clearTimeout(palTimer);
+    palHighlight = -1;
+  };
+
+  const palAppendGroup = (label: string): void => {
+    if (!palList) return;
+    const g = document.createElement("div");
+    g.className = "cmd-palette-group";
+    g.textContent = label;
+    palList.appendChild(g);
+  };
+  const palAppendItem = (it: PalItem): void => {
+    if (!palList) return;
+    const idx = palItems.length;
+    palItems.push(it);
+    const row = document.createElement("div");
+    row.className = "cmd-item" + (idx === palHighlight ? " selected" : "");
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(idx === palHighlight));
+    if (it.icon) row.innerHTML = iconSvg(it.icon);
+    const main = document.createElement("div");
+    main.className = "cmd-item-main";
+    const title = document.createElement("div");
+    title.className = "cmd-item-title";
+    title.textContent = it.title;
+    main.appendChild(title);
+    if (it.desc) {
+      const d = document.createElement("div");
+      d.className = "cmd-item-desc";
+      d.textContent = it.desc;
+      main.appendChild(d);
+    }
+    row.appendChild(main);
+    if (it.tag) {
+      const tag = document.createElement("span");
+      tag.className = "cmd-item-tag";
+      tag.textContent = it.tag;
+      row.appendChild(tag);
+    }
+    row.addEventListener("click", () => executePalItem(it));
+    palList.appendChild(row);
+  };
+  const palNoResult = (): void => {
+    if (!palList) return;
+    const e = document.createElement("div");
+    e.className = "cmd-palette-group";
+    e.textContent = t("cmdPalette.noResult");
+    palList.appendChild(e);
+  };
+
+  /** 渲染面板列表；npm 网络结果由输入防抖回调异步追加 */
+  const renderPalette = (q: string): void => {
+    if (!palList) return;
+    palList.innerHTML = "";
+    palItems = [];
+    palHighlight = -1;
+    const query = q.trim().toLowerCase();
+    const isPathLike = /^(\/|~\/|\.{1,2}\/|file:)/.test(query) || /\.tgz$/.test(query);
+    if (!query) {
+      palAppendGroup(t("cmdPalette.actionsSection"));
+      palAppendItem({ kind: "goto-github", title: t("plugins.tab.github"), desc: t("cmdPalette.gotoGithub"), icon: "github" });
+      palAppendItem({ kind: "goto-npm", title: t("plugins.tab.npm"), desc: t("cmdPalette.gotoNpm"), icon: "package" });
+      palAppendItem({ kind: "goto-local", title: t("plugins.tab.local"), desc: t("cmdPalette.gotoLocal"), icon: "folder-open" });
+      palAppendItem({ kind: "official", title: t("plugins.officialQuick"), desc: t("cmdPalette.gotoOfficial"), icon: "package" });
+      palAppendItem({ kind: "refresh", title: t("plugins.refresh"), desc: t("cmdPalette.refreshDesc"), icon: "refresh-cw" });
+      palAppendItem({ kind: "update-all", title: `${t("plugins.updateAll", { n: collectUpdateTasks().length })}`, desc: t("cmdPalette.updateAllDesc"), icon: "refresh-cw" });
+      return;
+    }
+    if (isPathLike) {
+      palAppendItem({ kind: "path", title: t("cmdPalette.installPath"), desc: q.trim(), path: q.trim(), icon: "folder-open" });
+      if (/^(\/|~\/|\.{1,2}\/|file:)/.test(query) && /\.tgz$/.test(query)) return; // 明确的本地 .tgz 路径：不搜 registry
+      if (/^(\/|~\/|\.{1,2}\/|file:)/.test(query)) return; // 路径输入：不搜 registry / npm
+    }
+    palAppendGroup(t("cmdPalette.registrySection"));
+    const hits = plugins.filter((p) => {
+      const hay = `${p.name} ${p.description?.zh ?? ""} ${p.description?.en ?? ""} ${p.pkg_name ?? ""}`.toLowerCase();
+      return hay.includes(query);
+    });
+    if (!hits.length) palNoResult();
+    for (const p of hits.slice(0, 12)) {
+      palAppendItem({
+        kind: "entry",
+        title: p.name,
+        desc: (p.description?.zh || p.description?.en || "").slice(0, 90),
+        tag: p.pkg_name ?? pkgNameOf(p.installSpec),
+        icon: "star",
+        entry: p,
+      });
+    }
+  };
+
+  const movePalHighlight = (delta: number): void => {
+    if (!palList) return;
+    const rows = palList.querySelectorAll<HTMLElement>(".cmd-item");
+    if (!rows.length) return;
+    palHighlight = Math.max(0, Math.min(rows.length - 1, palHighlight + delta));
+    rows.forEach((r, i) => {
+      const sel = i === palHighlight;
+      r.classList.toggle("selected", sel);
+      r.setAttribute("aria-selected", String(sel));
+    });
+    rows[palHighlight].scrollIntoView({ block: "nearest" });
+  };
+
+  /** 命令面板 → GitHub 表格：切到「全部」视图，搜索该条目名称并定位展开详情 */
+  const openGithubEntry = (p: PluginEntry): void => {
+    if (mainTab !== "github") switchMainTab("github");
+    githubView = "all";
+    filterCat = "";
+    filterText = p.name;
+    els.search.value = p.name;
+    renderGithubViews();
+    renderCategories();
+    fillModeSelects();
+    renderTable(true);
+    const v = document.getElementById("view-plugins");
+    if (v) v.scrollTop = 0;
+    locateAndOpen(p.pkg_name ?? pkgNameOf(p.installSpec));
+  };
+
+  const executePalItem = (it: PalItem): void => {
+    closePalette();
+    switch (it.kind) {
+      case "goto-github": switchMainTab("github"); break;
+      case "goto-npm": switchMainTab("npm"); break;
+      case "goto-local": switchMainTab("local"); break;
+      case "official":
+        if (mainTab !== "npm") switchMainTab("npm");
+        els.official.scrollIntoView({ behavior: "smooth", block: "start" });
+        break;
+      case "refresh": void refreshLatest(); break;
+      case "update-all": updateAllUpdatable(); break;
+      case "entry": if (it.entry) openGithubEntry(it.entry); break;
+      case "npm":
+        if (it.pkg) enqueueAction([{ label: `${t("plugins.install")} ${it.pkg}`, cmd: ["plugin", "--profile", "web", "add", it.pkg] }]);
+        break;
+      case "path": if (it.path) doLocalInstall(it.path); break;
+    }
+  };
+
+  if (palInput) {
+    palInput.addEventListener("input", () => {
+      renderPalette(palInput.value);
+      window.clearTimeout(palTimer);
+      const q = palInput.value.trim();
+      if (!q || /^(\/|~\/|\.{1,2}\/|file:)/.test(q) || /\.tgz$/.test(q)) return;
+      palTimer = window.setTimeout(async () => {
+        if (palEl?.hidden || palInput.value.trim().toLowerCase() !== q.toLowerCase()) return;
+        const items = await searchNpm(q);
+        if (palEl?.hidden || palInput.value.trim().toLowerCase() !== q.toLowerCase()) return;
+        const npms: PalItem[] = [];
+        for (const it of items) {
+          const name = it.package?.name ?? "";
+          if (!name) continue;
+          npms.push({
+            kind: "npm",
+            title: name,
+            desc: (it.package?.description ?? "").slice(0, 90),
+            tag: isInstalled(name) ? t("plugins.installedTag") : (it.package?.version ? `v${it.package.version}` : ""),
+            pkg: name,
+            icon: "package",
+          });
+        }
+        if (npms.length) {
+          palAppendGroup(t("cmdPalette.npmSection"));
+          for (const n of npms) palAppendItem(n);
+        }
+      }, 300);
+    });
+    palInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        movePalHighlight(1);
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        movePalHighlight(-1);
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        const it = palItems[palHighlight];
+        if (it) executePalItem(it);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        closePalette();
+      }
+    });
+  }
+  document.addEventListener("keydown", (ev) => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
+      ev.preventDefault();
+      if (palEl?.hidden) {
+        palEl.hidden = false;
+        renderPalette("");
+        palInput?.focus();
+      } else {
+        closePalette();
+      }
+      return;
+    }
+    if (ev.key === "Escape" && palEl && !palEl.hidden) {
+      ev.preventDefault();
+      closePalette();
+    }
+  });
+  palEl?.addEventListener("click", (ev) => {
+    if (ev.target === palEl) closePalette(); // 点击遮罩背景关闭
+  });
+
   window.addEventListener("lang-changed", () => {
     els.refreshLabel.textContent = t("plugins.refresh");
     void loadInstalled();
@@ -2050,6 +2372,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
     updateBadge();
     renderUpdateAllBtn();
     renderLocalInstalled();
+    if (palInput && palEl && !palEl.hidden) renderPalette(palInput.value); // P2：命令面板文字跟随语言
   });
 
   // 初始化：已安装 → 缓存（含 registry 快照 + 版本播种，跳过已安装）→ 秒开渲染快照 → 后台刷新 + 已安装更新检查 + 每 6h 定时
