@@ -1,0 +1,86 @@
+# .github/workflows/release.yml
+# 正式发布流程：打 v* 标签（如 v0.1.0）推送到 GitHub，自动构建
+# macOS（Apple Silicon + Intel）/ Windows / Linux 三平台安装包，
+# 并创建 draft Release（构建完成后在 Releases 页面人工检查、填说明、点 Publish）。
+#
+# 用法（发布 0.1.0）：
+#   git push origin main                                  # 先推送代码
+#   git tag v0.1.0 && git push origin v0.1.0              # 触发本工作流
+#   构建约 15~30 分钟/平台；完成后去 GitHub Releases 检查并发布。
+#
+# 无需配置任何 secret：公开仓库发布用自动的 GITHUB_TOKEN 即可。
+# 未做代码签名（无 Apple/Windows 证书），安装时会有系统提示，属预期行为。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenHarness v__VERSION__'
+          releaseBody: |
+            ## OpenHarness v__VERSION__
+
+            ### 安装
+            - macOS（Apple Silicon / Intel）：下载 `.dmg`，拖入 Applications 安装。
+              首次打开如被 Gatekeeper 拦截，请右键 →「打开」（本版本未签名，待之后配置开发者证书）。
+            - Windows：下载 `.msi` 或 `.exe`（NSIS 安装器）。SmartScreen 提示时点「更多信息 → 仍要运行」。
+            - Linux：`.deb` / `.rpm` / `.AppImage`。
+
+            ### 本次更新
+            （发布前在此填写更新内容）
+          draft: true
+          prerelease: false
