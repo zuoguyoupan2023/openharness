@@ -50,11 +50,13 @@
 - 设置页新增「链接打开方式」组（localStorage 持久化，立即生效）。
 - 覆盖入口：插件详情/表格链接（`target=_blank` 全局拦截，capture 阶段）、网页标签 `window.open`/`target=_blank`（Rust `webview-new-window` 事件）、终端 URL、侧边栏推荐链接、`window.open()` monkey-patch。
 
-### 2.2 遗留：对话内链接
+### 2.2 遗留：对话内链接 —— ✅ 已实施（2026-08-18）
 
-- 现状：DSH 标签为 iframe（`tabs.ts` 明确为「稳定、不丢会话」做的选择），跨源 iframe 内链接点击无法从前端 JS 拦截。
-- 计划（交付 B，单独阶段）：DSH 标签改原生 webview → 其 `on_new_window` 事件接入统一 `openLink`；同时 `on_navigation` 可同步对话内导航到历史记录。
-- 风险：可能影响 DSH 会话稳定性；实施后需真实对话场景实测，不稳定则回退 iframe。
+- **方案落地**：DSH 对话标签已从 iframe 改为**原生 webview**（`src/tabs.ts`，Rust 零改动）：
+  - 对话内 `target=_blank` / `window.open` 链接 → Rust `on_new_window` → `webview-new-window` 事件 → 统一 `openLink`（弹选择框 / App 内 / 浏览器）；
+  - 对话内普通链接 → webview 内正常导航（同步网址栏与历史栈，可记录进历史）；
+  - DSH 未就绪时保持等待动画；就绪后创建/显示 webview 并回到 3080 主页；DSH 重启后自动 reload 重连。
+- 风险：会话稳定性需真实对话场景实测；如发现异常可回退 iframe（`loadUrl`/`ensurePane` 的 dsh 分支改回 `frame.src = url` 并恢复 `applyWebviewState` 只处理 `web`）。
 
 ---
 

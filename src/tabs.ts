@@ -175,15 +175,15 @@ export class TabManager {
     }
   }
 
-  /** 根据当前激活标签应用 webview 显隐：网页标签显示，其余全部隐藏 */
+  /** 根据当前激活标签应用 webview 显隐：网页/DSH 标签显示，其余全部隐藏 */
   private async applyWebviewState(): Promise<void> {
     const active = this.getActive();
     for (const id of this.webviews) {
-      if (!active || active.id !== id || active.type !== "web") {
+      if (!active || active.id !== id || (active.type !== "web" && active.type !== "dsh")) {
         await this.hideWebview(id);
       }
     }
-    if (active && active.type === "web") {
+    if (active && (active.type === "web" || (active.type === "dsh" && this.dshReady))) {
       await this.showWebview(active);
     }
   }
@@ -319,7 +319,7 @@ export class TabManager {
   reload(): void {
     const tab = this.getActive();
     if (!tab) return;
-    if (tab.type === "web") {
+    if (tab.type === "web" || (tab.type === "dsh" && this.dshReady)) {
       if (this.webviews.has(tab.id)) {
         this.enqueue(() =>
           invoke("webview_reload", { id: tab.id }).catch((e) => console.error("webview_reload 失败:", e))
@@ -336,18 +336,17 @@ export class TabManager {
     }
   }
 
-  /** DSH 就绪：加载/刷新 DSH 标签（重启后自动重连） */
+  /** DSH 就绪：创建/显示 DSH 标签的原生 webview，并统一回到 DSH 主页（重启后重连新实例） */
   markDshReady(): void {
     this.dshReady = true;
     this.tabs.forEach((t) => {
       if (t.type !== "dsh") return;
       const pane = this.stackEl.querySelector<HTMLElement>(`[data-id="${t.id}"]`);
       if (pane) pane.querySelector<HTMLElement>(".tab-overlay")!.style.display = "none";
-      const frame = pane?.querySelector<HTMLIFrameElement>("iframe");
-      if (frame && frame.src) {
-        frame.src = frame.src; // 重启后刷新，连接新实例
-      } else {
-        this.loadUrl(t, DSH_URL);
+      // 激活中的 DSH 标签：回到 DSH 主页（未创建则创建 webview；已创建则导航重连），并显示
+      if (this.getActive()?.id === t.id) {
+        if (t.url !== DSH_URL) this.loadUrl(t, DSH_URL);
+        this.enqueue(() => this.applyWebviewState());
       }
     });
   }
@@ -451,7 +450,7 @@ export class TabManager {
     overlay.className = "tab-overlay";
     pane.appendChild(overlay);
 
-    // 未就绪的 DSH 标签：加载前显示等待动画
+    // 未就绪的 DSH 标签：加载前显示等待动画（webview 由 markDshReady 创建）
     if (tab.type === "dsh" && !this.dshReady) {
       overlay.style.display = "flex";
       overlay.innerHTML = `
@@ -467,8 +466,8 @@ export class TabManager {
     } else if (tab.type === "history") {
       this.renderHistoryPane(pane);
     } else if (tab.type === "dsh") {
+      // 已就绪的 DSH 标签：iframe 不加载（内容由原生 webview 承载），等待激活时创建/显示
       overlay.style.display = "none";
-      frame.src = tab.url;
     } else {
       // web：iframe 不加载（被原生 webview 覆盖），避免双重加载与白屏
       overlay.style.display = "none";
@@ -519,12 +518,13 @@ export class TabManager {
         btn.addEventListener("click", () => this.navigate(btn.dataset.url || ""));
       });
     } else {
-      overlay.style.display = "none";
-      if (tab.type === "dsh") {
-        if (frame) frame.src = url;
+      // 清除 iframe 残留（dsh/web 统一由原生 webview 承载；iframe 仅作占位容器不加载内容）
+      if (frame && frame.getAttribute("src")) frame.removeAttribute("src");
+      if (tab.type === "dsh" && !this.dshReady) {
+        // DSH 未就绪：保持等待动画，就绪后由 markDshReady 创建 webview
+        overlay.style.display = "flex";
       } else {
-        // web：清除 iframe 残留（如从 dsh 转来），导航交给原生 webview
-        if (frame && frame.getAttribute("src")) frame.removeAttribute("src");
+        overlay.style.display = "none";
         this.enqueue(() => this.navigateWebview(tab, url));
       }
     }
@@ -533,10 +533,10 @@ export class TabManager {
     this.syncUrlBar();
   }
 
-  /** 原生 webview 导航事件：同步网址栏与历史栈 */
+  /** 原生 webview 导航事件：同步网址栏与历史栈（web / dsh 均生效） */
   private onNav({ id, url }: WebviewEvent): void {
     const tab = this.tabs.find((t) => t.id === id);
-    if (!tab || tab.type !== "web" || !url || tab.url === url) return;
+    if (!tab || (tab.type !== "web" && tab.type !== "dsh") || !url || tab.url === url) return;
     tab.url = url;
     tab.title = hostOf(url);
     recordHistory(url, tab.title);
@@ -548,10 +548,10 @@ export class TabManager {
     this.persist();
   }
 
-  /** 原生 webview 标题变化：更新标签标题与历史记录标题 */
+  /** 原生 webview 标题变化：更新标签标题与历史记录标题（web / dsh 均生效） */
   private onTitle({ id, title }: WebviewTitleEvent): void {
     const tab = this.tabs.find((t) => t.id === id);
-    if (!tab || tab.type !== "web" || !title) return;
+    if (!tab || (tab.type !== "web" && tab.type !== "dsh") || !title) return;
     const clean = title.length > 40 ? title.slice(0, 40) + "…" : title;
     tab.title = clean;
     if (tab.url) recordHistory(tab.url, clean);
