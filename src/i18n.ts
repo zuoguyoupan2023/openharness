@@ -52,7 +52,6 @@ const DICT: Record<string, Entry> = {
   // ===== 历史记录 =====
   "history.title": { zh: "历史记录", en: "History" },
   "history.clear": { zh: "清空", en: "Clear" },
-  "history.close": { zh: "关闭", en: "Close" },
   "history.today": { zh: "今天", en: "Today" },
   "history.yesterday": { zh: "昨天", en: "Yesterday" },
   "history.earlier": { zh: "更早", en: "Earlier" },

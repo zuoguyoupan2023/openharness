@@ -8,9 +8,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { t } from "./i18n";
 import { openLink } from "./open-link";
-import { recordHistory } from "./history";
+import { recordHistory, renderHistoryPage, clearHistory } from "./history";
 
-export type TabType = "dsh" | "web" | "blank";
+export type TabType = "dsh" | "web" | "blank" | "history";
 
 export interface TabData {
   id: string;
@@ -216,11 +216,25 @@ export class TabManager {
     return this.tabs.find((t) => t.id === this.activeId) ?? null;
   }
 
+  /** 打开/激活历史标签页：已有历史标签则激活，否则新建 */
+  openHistoryTab(): void {
+    const existing = this.tabs.find((t) => t.type === "history");
+    if (existing) this.activate(existing.id);
+    else this.addTab("history");
+  }
+
   addTab(type: TabType, url?: string, activate = true): TabData {
     const u = url ?? (type === "dsh" ? DSH_URL : "");
     const tab: TabData = {
       id: makeId(),
-      title: type === "dsh" ? "DeepSeek Harness" : type === "blank" ? t("tab.untitled") : hostOf(u),
+      title:
+        type === "dsh"
+          ? "DeepSeek Harness"
+          : type === "history"
+            ? t("history.title")
+            : type === "blank"
+              ? t("tab.untitled")
+              : hostOf(u),
       url: u,
       type,
       history: u ? [u] : [],
@@ -262,6 +276,10 @@ export class TabManager {
       if (pane) pane.style.display = t.id === id ? "flex" : "none";
     });
     this.ensurePane(tab);
+    // 历史标签每次激活刷新内容（数据可能已变化）
+    if (tab.type === "history") {
+      this.renderHistoryPane(this.ensurePane(tab));
+    }
     this.renderTabBar();
     this.syncUrlBar();
     // 网页标签 → 原生 webview 显隐切换
@@ -275,6 +293,7 @@ export class TabManager {
     const url = normalizeInput(raw);
     if (!url) return;
     if (tab.type === "blank") tab.type = "web";
+    if (tab.type === "history") tab.type = "web"; // 在历史标签输入地址 → 转为普通网页标签
     if (tab.type === "dsh" && url !== DSH_URL) tab.type = "web";
     // 历史栈：截断前进记录，压入新记录
     tab.history = tab.history.slice(0, tab.historyIdx + 1);
@@ -388,7 +407,7 @@ export class TabManager {
           id: tab.id,
           title: tab.title || t("tab.untitled"),
           url: tab.url || "",
-          type: tab.type === "dsh" ? "dsh" : tab.type === "blank" ? "blank" : "web",
+          type: tab.type === "dsh" ? "dsh" : tab.type === "blank" ? "blank" : tab.type === "history" ? "history" : "web",
           history: Array.isArray(tab.history) ? tab.history : tab.url ? [tab.url] : [],
           historyIdx:
             typeof tab.historyIdx === "number" && tab.historyIdx >= 0 ? tab.historyIdx : 0,
@@ -445,6 +464,8 @@ export class TabManager {
       overlay.querySelectorAll<HTMLButtonElement>("[data-url]").forEach((btn) => {
         btn.addEventListener("click", () => this.navigate(btn.dataset.url || ""));
       });
+    } else if (tab.type === "history") {
+      this.renderHistoryPane(pane);
     } else if (tab.type === "dsh") {
       overlay.style.display = "none";
       frame.src = tab.url;
@@ -467,6 +488,20 @@ export class TabManager {
         <div class="newtab-sub">${t("newtab.sub")}</div>
         <div class="quick-links">${links}</div>
       </div>`;
+  }
+
+  /** 历史标签页内容渲染（激活时重新渲染，保证数据最新） */
+  private renderHistoryPane(pane: HTMLElement): void {
+    const overlay = pane.querySelector<HTMLElement>(".tab-overlay")!;
+    overlay.style.display = "flex";
+    renderHistoryPage(overlay, {
+      onOpen: (item) => {
+        recordHistory(item.url); // 刷新本条访问时间
+        this.addTab("web", item.url); // 新标签打开并激活
+        this.renderHistoryPane(pane); // 历史列表顺序更新
+      },
+      onClear: () => clearHistory(),
+    });
   }
 
   private loadUrl(tab: TabData, url: string): void {

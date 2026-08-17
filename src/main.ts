@@ -34,7 +34,6 @@ import { initTheme, cycleTheme, effectiveTheme, getThemePref } from "./theme";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { startDshSettingsSync, pushPref } from "./dsh-settings";
 import { registerLinkOpener, openLink } from "./open-link";
-import { renderHistoryList, clearHistory } from "./history";
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -365,7 +364,8 @@ async function boot(): Promise<void> {
   // ===== 统一链接打开方式 =====
   registerLinkOpener({
     openInApp: (url) => {
-      tabManager.addTab("web", url);
+      tabManager.addTab("web", url); // 新标签并激活
+      switchView("chat"); // 自动切到对话界面，显示刚打开的标签页
     },
     openExternal: (url) => {
       void openUrl(url).catch(() => {});
@@ -407,30 +407,11 @@ async function boot(): Promise<void> {
     return null;
   }) as typeof window.open;
 
-  // ===== 历史记录面板 =====
-  const histPanel = $("history-panel");
-  const histList = $("history-list") as HTMLElement;
-  const refreshHistory = (): void =>
-    renderHistoryList(histList, (item) => {
-      tabManager.addTab("web", item.url);
-      histPanel.hidden = true;
-    });
-  $("url-history").addEventListener("click", (e) => {
-    e.stopPropagation();
-    histPanel.hidden = !histPanel.hidden;
-    if (!histPanel.hidden) refreshHistory();
-  });
-  $("history-close").addEventListener("click", () => {
-    histPanel.hidden = true;
-  });
-  $("history-clear").addEventListener("click", () => {
-    clearHistory();
-    refreshHistory();
-  });
-  document.addEventListener("click", (ev) => {
-    if (histPanel.hidden) return;
-    if (histPanel.contains(ev.target as Node) || ev.target === $("url-history")) return;
-    histPanel.hidden = true;
+  // ===== 历史记录：独立标签页（Chrome 风格） =====
+  // 点击地址栏最右的历史按钮：打开/激活历史标签页，并保证停留在对话视图
+  $("url-history").addEventListener("click", () => {
+    tabManager.openHistoryTab();
+    switchView("chat");
   });
 
   $("tab-new").addEventListener("click", () => tabManager.addTab("blank"));

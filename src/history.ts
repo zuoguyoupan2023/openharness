@@ -175,3 +175,81 @@ export function renderHistoryList(
     }
   }
 }
+
+/** 历史标签页整页渲染（Chrome 风格：顶部标题 + 清空 + 按天分组列表） */
+export interface HistoryPageHandlers {
+  onOpen: (item: HistoryItem) => void;
+  onClear: () => void;
+}
+
+export function renderHistoryPage(container: HTMLElement, h: HistoryPageHandlers): void {
+  container.innerHTML = "";
+  const page = document.createElement("div");
+  page.className = "history-page";
+
+  const head = document.createElement("div");
+  head.className = "history-page-head";
+  const title = document.createElement("div");
+  title.className = "history-page-title";
+  title.textContent = t("history.title");
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "btn-icon link-btn history-clear-btn";
+  clearBtn.innerHTML = `${iconSvg("trash-2")}<span>${t("history.clear")}</span>`;
+  clearBtn.addEventListener("click", () => {
+    h.onClear();
+    renderHistoryPage(container, h); // 清空后重新渲染（空态）
+  });
+  head.appendChild(title);
+  head.appendChild(clearBtn);
+
+  const list = document.createElement("div");
+  list.className = "history-page-list";
+
+  const items = getHistory();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = t("history.empty");
+    list.appendChild(empty);
+  } else {
+    for (const g of groupHistory(items)) {
+      const gt = document.createElement("div");
+      gt.className = "history-group-title";
+      gt.textContent = g.label;
+      list.appendChild(gt);
+      for (const it of g.items) {
+        const row = document.createElement("div");
+        row.className = "history-item";
+        row.title = it.url;
+        const icon = document.createElement("span");
+        icon.className = "hi-icon";
+        icon.innerHTML = iconSvg("globe");
+        const main = document.createElement("div");
+        main.className = "hi-main";
+        const name = document.createElement("div");
+        name.className = "hi-title";
+        name.textContent = it.title || hostOf(it.url);
+        const url = document.createElement("div");
+        url.className = "hi-url";
+        url.textContent = it.url;
+        main.appendChild(name);
+        main.appendChild(url);
+        const time = document.createElement("span");
+        time.className = "hi-time";
+        time.textContent = fmtTime(it.time);
+        row.appendChild(icon);
+        row.appendChild(main);
+        row.appendChild(time);
+        row.addEventListener("click", () => {
+          h.onOpen(it);
+          renderHistoryPage(container, h); // 重新渲染把本条提到最近，保持数据新鲜
+        });
+        list.appendChild(row);
+      }
+    }
+  }
+
+  page.appendChild(head);
+  page.appendChild(list);
+  container.appendChild(page);
+}
