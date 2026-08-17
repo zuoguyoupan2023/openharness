@@ -237,6 +237,63 @@ export function initPlugins(opts: PluginCenterOptions): void {
   let sortMode: SortMode = "default";
   let filterCat = "";
   let filterText = "";
+
+  // —— P2：UI 状态持久化（013 §P2：主 tab / 二级视图 / 分类 / 筛选 / 排序 / 搜索 / 滚动位置 localStorage 重启恢复）——
+  const UI_STATE_KEY = "dsh-plugins-ui-state";
+  interface UiState {
+    mainTab: MainTab;
+    githubView: GithubView;
+    filterCat: string;
+    filterMode: FilterMode;
+    sortMode: SortMode;
+    filterText: string;
+    scrollTop: number;
+  }
+  const isOneOf = <T extends string>(v: string | undefined, arr: readonly T[]): v is T =>
+    !!v && (arr as readonly string[]).includes(v);
+  const readUiState = (): UiState => {
+    const def: UiState = { mainTab: "github", githubView: "awesome", filterCat: "", filterMode: "all", sortMode: "default", filterText: "", scrollTop: 0 };
+    try {
+      const raw = localStorage.getItem(UI_STATE_KEY);
+      if (!raw) return def;
+      const s = JSON.parse(raw) as Partial<UiState>;
+      return {
+        mainTab: isOneOf(s.mainTab, ["github", "npm", "local"] as const) ? s.mainTab : def.mainTab,
+        githubView: isOneOf(s.githubView, ["awesome", "topics", "all", "recommended"] as const) ? s.githubView : def.githubView,
+        filterCat: typeof s.filterCat === "string" ? s.filterCat : "",
+        filterMode: isOneOf(s.filterMode, ["all", "installed", "updatable", "notinstalled"] as const) ? s.filterMode : def.filterMode,
+        sortMode: isOneOf(s.sortMode, ["default", "stars", "updated", "name"] as const) ? s.sortMode : def.sortMode,
+        filterText: typeof s.filterText === "string" ? s.filterText : "",
+        scrollTop: typeof s.scrollTop === "number" && s.scrollTop > 0 ? s.scrollTop : 0,
+      };
+    } catch {
+      return def;
+    }
+  };
+  const saveUiState = (): void => {
+    const v = document.getElementById("view-plugins");
+    const state: UiState = {
+      mainTab,
+      githubView,
+      filterCat,
+      filterMode,
+      sortMode,
+      filterText,
+      scrollTop: v ? v.scrollTop : 0,
+    };
+    try {
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify(state));
+    } catch {
+      /* localStorage 不可用时静默，不影响 UI */
+    }
+  };
+  const savedState = readUiState();
+  mainTab = savedState.mainTab;
+  githubView = savedState.githubView;
+  filterCat = savedState.filterCat;
+  filterMode = savedState.filterMode;
+  sortMode = savedState.sortMode;
+  filterText = savedState.filterText;
   let snapshot: RegistrySnapshot = getSnapshot();
   let plugins: PluginEntry[] = snapshot.plugins;
   let categoriesLabels: Record<string, { zh?: string; en?: string }> = snapshot.awesome?.categories ?? {};
@@ -487,6 +544,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
       renderLocalInstalled();
       hideLocalError();
     }
+    saveUiState(); // P2：主 tab 变更即持久化
   }
 
   /** 工具栏可见性：共享搜索框常显；搜索/本地按钮/筛选/排序/刷新随主 tab 切换 */
@@ -520,6 +578,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
         renderTable(true);
         const v = document.getElementById("view-plugins");
         if (v) v.scrollTop = 0;
+        saveUiState(); // P2
       });
       els.githubViews.appendChild(b);
     }
@@ -573,6 +632,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
         renderTable(true);
         const v = document.getElementById("view-plugins");
         if (v) v.scrollTop = 0;
+        saveUiState(); // P2
       });
       els.cats.appendChild(chip);
     };
@@ -1345,6 +1405,20 @@ export function initPlugins(opts: PluginCenterOptions): void {
     moreObs.observe(moreEl);
   }
 
+  /** P2：恢复上次滚动位置（分页表格：先加载足够行数，再逐步逼近目标 scrollTop，直到可达或行数耗尽） */
+  function restoreScroll(target: number): void {
+    const v = document.getElementById("view-plugins");
+    if (!v || !target) return;
+    let guard = 0;
+    v.scrollTop = target;
+    while (v.scrollTop < target * 0.95 && guard < 20 && visibleRows < filtered().length) {
+      visibleRows += TABLE_PAGE;
+      renderTable(false);
+      v.scrollTop = target;
+      guard++;
+    }
+  }
+
   /** 表格行操作区 HTML（P0-6：npm 可更新=更新到 x / 已最新=禁用 / github·本地=重新安装；P1-6 图标按钮带 aria-label） */
   function tableActionsHtmlFor(p: PluginEntry): string {
     const pkg = p.pkg_name ?? pkgNameOf(p.installSpec);
@@ -1626,6 +1700,7 @@ export function initPlugins(opts: PluginCenterOptions): void {
         renderTable(true);
         const v = document.getElementById("view-plugins");
         if (v) v.scrollTop = 0;
+        saveUiState(); // P2：搜索词持久化
       } else if (mainTab === "npm") {
         void runNpmSearch();
       } else {
@@ -1786,18 +1861,31 @@ export function initPlugins(opts: PluginCenterOptions): void {
     els.official.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
+  // P2：滚动位置 250ms 防抖保存（重启恢复）
+  let scrollSaveTimer = 0;
+  document.getElementById("view-plugins")?.addEventListener(
+    "scroll",
+    () => {
+      window.clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = window.setTimeout(() => saveUiState(), 250);
+    },
+    { passive: true }
+  );
+
   // P1-2：筛选（全部/已安装/可更新/未安装）与排序（Stars/最近更新/名称）变更
   els.filterMode.addEventListener("change", () => {
     filterMode = els.filterMode.value as FilterMode;
     renderTable(true);
     const v = document.getElementById("view-plugins");
     if (v) v.scrollTop = 0;
+    saveUiState(); // P2
   });
   els.sortMode.addEventListener("change", () => {
     sortMode = els.sortMode.value as SortMode;
     renderTable(true);
     const v = document.getElementById("view-plugins");
     if (v) v.scrollTop = 0;
+    saveUiState(); // P2
   });
 
   /** 索引来源与更新时间常显（P1-2） */
@@ -1840,15 +1928,18 @@ export function initPlugins(opts: PluginCenterOptions): void {
     renderCategories();
     fillModeSelects();
     refreshToolbarVisibility();
-    els.search.placeholder = t("plugins.searchGithub");
-    els.githubPanel.hidden = false;
-    els.npmPanel.hidden = true;
-    els.localPanel.hidden = true;
+    if (mainTab === "github" && filterText) els.search.value = filterText; // P2：恢复上次搜索词（仅 GitHub 过滤语义）
+    els.search.placeholder =
+      mainTab === "github" ? t("plugins.searchGithub") : mainTab === "npm" ? t("plugins.searchNpm") : t("plugins.searchLocal");
+    els.githubPanel.hidden = mainTab !== "github";
+    els.npmPanel.hidden = mainTab !== "npm";
+    els.localPanel.hidden = mainTab !== "local";
     renderOfficial();
     renderTable(true);
     renderBanner();
     renderIndexInfo();
     renderLocalInstalled();
+    restoreScroll(savedState.scrollTop); // P2：恢复上次滚动位置（分页加载至可达）
     await checkInstalledUpdates(false);
     updateBadge();
     renderUpdateAllBtn();
