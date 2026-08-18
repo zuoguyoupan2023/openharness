@@ -1,4 +1,5 @@
-# OpenHarness 🧠
+# OpenHarness: AgentBox for DSH, claudecode, codex and zcode.
+OpenHarness是一个智能体盒子,用来容纳 Deepseek Harness, Claude code, Codex 还有Zcode这些智能体工具. OH不修改这些智能体的内部逻辑,而是做一个便捷的可视化工作空间.
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness)（DSH）Web UI 包装成 Mac 原生应用的桌面壳 —— 双击即用、内置多标签浏览、插件中心与国内镜像支持。
 
